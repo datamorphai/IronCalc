@@ -1,4 +1,5 @@
 use super::{
+    super::utils::quote_name,
     stringify::{stringify_reference, DisplaceData},
     ArrayNode, Node, Reference,
 };
@@ -180,6 +181,8 @@ fn to_string_moved(
         RangeKind {
             sheet_name,
             sheet_index,
+            sheet_name2,
+            sheet_index2,
             absolute_row1,
             absolute_column1,
             row1,
@@ -256,6 +259,39 @@ fn to_string_moved(
                 column: move_context.column,
                 row: move_context.row,
             };
+            // Moving cells shifts rows and columns; it never changes which
+            // sheets a 3-D reference spans. Written the way Excel writes one,
+            // with both names in front of a single `!`.
+            if sheet_index != sheet_index2 {
+                let local = |row, column, absolute_row, absolute_column| {
+                    stringify_reference(
+                        Some(&context),
+                        &DisplaceData::None,
+                        &Reference {
+                            sheet_name: &None,
+                            sheet_index: *sheet_index,
+                            absolute_row,
+                            absolute_column,
+                            row,
+                            column,
+                        },
+                        full_row,
+                        full_column,
+                    )
+                };
+                let a1 = local(new_row1, new_column1, *absolute_row1, *absolute_column1);
+                let a2 = local(new_row2, new_column2, *absolute_row2, *absolute_column2);
+                let body = if a1 == a2 { a1 } else { format!("{a1}:{a2}") };
+                let first = match sheet_name {
+                    Some(name) => quote_name(name),
+                    None => String::new(),
+                };
+                let last = match sheet_name2 {
+                    Some(name) => quote_name(name),
+                    None => String::new(),
+                };
+                return format!("{first}:{last}!{body}");
+            }
             let s1 = stringify_reference(
                 Some(&context),
                 &DisplaceData::None,

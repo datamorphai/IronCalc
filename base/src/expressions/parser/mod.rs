@@ -156,6 +156,18 @@ pub enum Node {
     RangeKind {
         sheet_name: Option<String>,
         sheet_index: u32,
+        /// The far end of a 3-D reference: `Sheet1:Sheet3!A1` ends on `Sheet3`.
+        ///
+        /// Equal to `sheet_index` for the ordinary case, which is every range
+        /// written without a sheet span. Holding one field rather than a
+        /// separate node variant is deliberate: a new variant would be silently
+        /// swallowed by the `_ =>` arms that several passes over the tree carry,
+        /// whereas a new field makes the compiler stop at every place that
+        /// builds a range and ask what the far end is.
+        sheet_index2: u32,
+        /// The far end's name as written, for stringifying back to
+        /// `Sheet1:Sheet3!A1`. `None` whenever this is not a 3-D reference.
+        sheet_name2: Option<String>,
         absolute_row1: bool,
         absolute_column1: bool,
         row1: i32,
@@ -594,12 +606,119 @@ impl<'a> Parser<'a> {
             if let Node::ParseErrorKind { .. } = p {
                 return p;
             }
+            if let Some(node) = self.three_dimensional_range(&t, &p) {
+                return node;
+            }
             return Node::OpRangeKind {
                 left: Box::new(t),
                 right: Box::new(p),
             };
         }
         t
+    }
+
+    /// Recognise `Sheet1:Sheet3!A1` — Excel's 3-D reference.
+    ///
+    /// The grammar reaches here having already read a bare name, a colon, and a
+    /// reference qualified by a sheet, so what it holds is
+    /// `OpRange(Name("Sheet1"), Sheet3!A1)`. That round-trips through
+    /// `stringify` unchanged, which is why the formula was preserved but
+    /// answered `#VALUE!`: nothing downstream could make a range out of a name
+    /// that resolves to no value.
+    ///
+    /// Both halves must agree that this is about sheets before it is read as
+    /// one. The left name has to *be* a worksheet, and the right side has to
+    /// carry a sheet it was written with — `sheet_name: Some(_)`, which the
+    /// parser only sets for a reference the user qualified. That pairing cannot
+    /// misfire on a defined name: `total:Sheet3!A1` fails the first test, and
+    /// `Sheet1:A1` fails the second.
+    fn three_dimensional_range(&self, left: &Node, right: &Node) -> Option<Node> {
+        let Node::NamedVariableKind { name, .. } = left else {
+            return None;
+        };
+        let first = self.get_sheet_index_by_name(name)?;
+
+        // Coordinates come from the right-hand side alone. `Sheet1:Sheet3!A1`
+        // means A1 *on each sheet*, so the span is the only thing the left
+        // contributes.
+        let (last, last_name, geometry) = match right {
+            Node::ReferenceKind {
+                sheet_name: Some(last_name),
+                sheet_index,
+                row,
+                column,
+                absolute_row,
+                absolute_column,
+            } => (
+                *sheet_index,
+                last_name,
+                (
+                    *absolute_row,
+                    *absolute_column,
+                    *row,
+                    *column,
+                    *absolute_row,
+                    *absolute_column,
+                    *row,
+                    *column,
+                ),
+            ),
+            Node::RangeKind {
+                sheet_name: Some(last_name),
+                sheet_index,
+                sheet_index2,
+                absolute_row1,
+                absolute_column1,
+                row1,
+                column1,
+                absolute_row2,
+                absolute_column2,
+                row2,
+                column2,
+                ..
+            // A right-hand side that already spans sheets would mean
+            // `Sheet1:Sheet2:Sheet4!A1`, which Excel does not write.
+            } if sheet_index == sheet_index2 => (
+                *sheet_index,
+                last_name,
+                (
+                    *absolute_row1,
+                    *absolute_column1,
+                    *row1,
+                    *column1,
+                    *absolute_row2,
+                    *absolute_column2,
+                    *row2,
+                    *column2,
+                ),
+            ),
+            _ => return None,
+        };
+
+        let (
+            absolute_row1,
+            absolute_column1,
+            row1,
+            column1,
+            absolute_row2,
+            absolute_column2,
+            row2,
+            column2,
+        ) = geometry;
+        Some(Node::RangeKind {
+            sheet_name: Some(name.clone()),
+            sheet_index: first,
+            sheet_index2: last,
+            sheet_name2: Some(last_name.clone()),
+            absolute_row1,
+            absolute_column1,
+            row1,
+            column1,
+            absolute_row2,
+            absolute_column2,
+            row2,
+            column2,
+        })
     }
 
     fn parse_implicit(&mut self) -> Node {
@@ -853,6 +972,8 @@ impl<'a> Parser<'a> {
                     Some(index) => Node::RangeKind {
                         sheet_name: sheet,
                         sheet_index: index,
+                        sheet_index2: index,
+                        sheet_name2: None,
                         row1,
                         column1,
                         row2,
@@ -1228,6 +1349,8 @@ impl<'a> Parser<'a> {
                     None => Node::RangeKind {
                         sheet_name,
                         sheet_index: table_sheet_index,
+                        sheet_index2: table_sheet_index,
+                        sheet_name2: None,
                         absolute_row1: true,
                         absolute_column1: true,
                         row1: row_start,
@@ -1262,6 +1385,8 @@ impl<'a> Parser<'a> {
                         Node::RangeKind {
                             sheet_name,
                             sheet_index: table_sheet_index,
+                            sheet_index2: table_sheet_index,
+                            sheet_name2: None,
                             absolute_row1: true,
                             absolute_column1: true,
                             row1: row_start,
@@ -1303,6 +1428,8 @@ impl<'a> Parser<'a> {
                         Node::RangeKind {
                             sheet_name,
                             sheet_index: table_sheet_index,
+                            sheet_index2: table_sheet_index,
+                            sheet_name2: None,
                             absolute_row1: true,
                             absolute_column1: true,
                             row1: row_start,

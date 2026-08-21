@@ -41,11 +41,17 @@ fn sums_ignoring_errors() {
 fn every_option_that_ignores_errors_does() {
     let mut model = model_with_error();
     for (index, options) in [2, 3, 6, 7].iter().enumerate() {
-        model._set(&format!("C{}", index + 1), &format!("=AGGREGATE(9,{options},A1:A5)"));
+        model._set(
+            &format!("C{}", index + 1),
+            &format!("=AGGREGATE(9,{options},A1:A5)"),
+        );
     }
     // And every option that does not, does not.
     for (index, options) in [0, 1, 4, 5].iter().enumerate() {
-        model._set(&format!("D{}", index + 1), &format!("=AGGREGATE(9,{options},A1:A5)"));
+        model._set(
+            &format!("D{}", index + 1),
+            &format!("=AGGREGATE(9,{options},A1:A5)"),
+        );
     }
     model.evaluate();
 
@@ -79,7 +85,11 @@ fn the_aggregations() {
     model.evaluate();
 
     for (index, (formula, expected)) in cases.iter().enumerate() {
-        assert_eq!(model._get_text(&format!("C{}", index + 1)), *expected, "{formula}");
+        assert_eq!(
+            model._get_text(&format!("C{}", index + 1)),
+            *expected,
+            "{formula}"
+        );
     }
 }
 

@@ -95,6 +95,8 @@ pub fn add_implicit_intersection(node: &mut Node, add: bool) {
             column2,
             sheet_name,
             sheet_index,
+            sheet_name2,
+            sheet_index2,
             absolute_row1,
             absolute_column1,
             absolute_row2,
@@ -106,6 +108,8 @@ pub fn add_implicit_intersection(node: &mut Node, add: bool) {
                     child: Box::new(Node::RangeKind {
                         sheet_name: sheet_name.clone(),
                         sheet_index: *sheet_index,
+                        sheet_index2: *sheet_index2,
+                        sheet_name2: sheet_name2.clone(),
                         absolute_row1: *absolute_row1,
                         absolute_column1: *absolute_column1,
                         row1: *row1,

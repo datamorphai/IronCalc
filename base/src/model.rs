@@ -294,6 +294,8 @@ impl<'a> Model<'a> {
             }
             Node::RangeKind {
                 sheet_name: _,
+                sheet_name2: _,
+                sheet_index2: _,
                 sheet_index,
                 absolute_row1,
                 absolute_column1,
@@ -597,6 +599,8 @@ impl<'a> Model<'a> {
             }
             RangeKind {
                 sheet_index,
+                sheet_index2,
+                sheet_name2: _,
                 row1,
                 column1,
                 row2,
@@ -627,16 +631,22 @@ impl<'a> Model<'a> {
                 } else {
                     *column2 + cell.column
                 };
-                self.support
-                    .entry(cell)
-                    .or_default()
-                    .push(CellOrRange::Range((
-                        *sheet_index,
-                        r1.min(r2),
-                        c1.min(c2),
-                        r1.max(r2),
-                        c1.max(c2),
-                    )));
+                for sheet in *sheet_index.min(sheet_index2)..=*sheet_index.max(sheet_index2) {
+                    self.support
+                        .entry(cell)
+                        .or_default()
+                        .push(CellOrRange::Range((
+                            sheet,
+                            r1.min(r2),
+                            c1.min(c2),
+                            r1.max(r2),
+                            c1.max(c2),
+                        )));
+                }
+                // The far end carries `sheet_index2`, which equals `sheet_index`
+                // for every range written without a sheet span. A 3-D reference
+                // is the case where they differ, and it is `range_bounds` that
+                // decides whether the caller is entitled to one.
                 CalcResult::Range {
                     left: CellReferenceIndex {
                         sheet: *sheet_index,
@@ -644,7 +654,7 @@ impl<'a> Model<'a> {
                         column: c1.min(c2),
                     },
                     right: CellReferenceIndex {
-                        sheet: *sheet_index,
+                        sheet: *sheet_index2,
                         row: r1.max(r2),
                         column: c1.max(c2),
                     },
@@ -1506,10 +1516,17 @@ impl<'a> Model<'a> {
 
                 // At this point a range needs to be transformed into an array
                 let result = if let CalcResult::Range { left, right } = result {
-                    if left.sheet == right.sheet
-                        && left.row == right.row
-                        && left.column == right.column
-                    {
+                    if left.sheet != right.sheet {
+                        // A 3-D reference has no value of its own and cannot
+                        // spill: there is no single sheet for the array to come
+                        // from. Excel answers `#VALUE!`, and without this the
+                        // span would quietly spill from its first sheet alone.
+                        CalcResult::new_error(
+                            Error::VALUE,
+                            cell_reference,
+                            "A 3-D reference cannot be used as a value".to_string(),
+                        )
+                    } else if left.row == right.row && left.column == right.column {
                         // it is a single cell range, we can just return the value of the cell
                         self.evaluate_cell(left)
                     } else {

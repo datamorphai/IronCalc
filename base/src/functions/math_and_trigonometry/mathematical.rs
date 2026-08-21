@@ -266,6 +266,8 @@ impl<'a> Model<'a> {
                 } => &Node::RangeKind {
                     sheet_name: sheet_name.clone(),
                     sheet_index: *sheet_index,
+                    sheet_index2: *sheet_index,
+                    sheet_name2: None,
                     absolute_row1: *absolute_row,
                     absolute_column1: *absolute_column,
                     row1: *row,
@@ -429,6 +431,8 @@ impl<'a> Model<'a> {
                 } => &Node::RangeKind {
                     sheet_name: sheet_name.clone(),
                     sheet_index: *sheet_index,
+                    sheet_index2: *sheet_index,
+                    sheet_name2: None,
                     absolute_row1: *absolute_row,
                     absolute_column1: *absolute_column,
                     row1: *row,

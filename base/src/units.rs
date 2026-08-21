@@ -131,6 +131,8 @@ impl<'a> Model<'a> {
             }
             Node::RangeKind {
                 sheet_name: _,
+                sheet_name2: _,
+                sheet_index2: _,
                 sheet_index,
                 absolute_row1,
                 absolute_column1,

@@ -7,9 +7,8 @@ use crate::{
     model::Model,
 };
 
-pub(crate) mod binary_search;
 mod aggregate;
-pub(crate) mod range_walk;
+pub(crate) mod binary_search;
 mod database;
 pub(crate) mod date_and_time;
 mod engineering;
@@ -19,6 +18,7 @@ mod logical;
 mod lookup_and_reference;
 mod macros;
 mod math_and_trigonometry;
+pub(crate) mod range_walk;
 mod spill_functions;
 mod statistical;
 mod subtotal;
@@ -2305,6 +2305,63 @@ impl Function {
     }
 }
 
+/// Whether this argument is written as a 3-D reference.
+///
+/// Shallow by design: it asks about the argument the user wrote, which is where
+/// a 3-D reference can appear. A span smuggled through a nested call is not
+/// reachable, because the functions that could return one are the eighteen that
+/// return a number rather than a range.
+fn spans_sheets(node: &Node) -> bool {
+    matches!(
+        node,
+        Node::RangeKind {
+            sheet_index,
+            sheet_index2,
+            ..
+        } if sheet_index != sheet_index2
+    )
+}
+
+impl Function {
+    /// The functions Excel documents as taking a 3-D reference.
+    ///
+    /// The same eighteen that pass `SheetSpan::Allowed` to `range_bounds`. Both
+    /// lists have to agree: this one decides whether the call is refused, and
+    /// that one decides whether the walk actually crosses sheets. A function
+    /// named here but walking with `Rejected` would answer `#VALUE!` from
+    /// deeper in; one walking with `Allowed` but missing here never gets the
+    /// chance. `test_3d_references` holds them to each other.
+    fn accepts_sheet_span(&self) -> bool {
+        matches!(
+            self,
+            Function::Sum
+                | Function::Average
+                | Function::Averagea
+                | Function::Count
+                | Function::Counta
+                | Function::Max
+                | Function::MaxA
+                | Function::Min
+                | Function::MinA
+                | Function::Product
+                | Function::StDevP
+                | Function::StDevS
+                | Function::Stdeva
+                | Function::Stdevpa
+                | Function::VarP
+                | Function::VarS
+                | Function::VarA
+                | Function::VarpA
+                // The pre-2010 spellings — STDEV, STDEVP, VAR, VARP — take a
+                // 3-D reference too, and each is an alias for one of the above.
+                | Function::Stdev
+                | Function::StDevPCompat
+                | Function::VarCompat
+                | Function::VarPCompat
+        )
+    }
+}
+
 impl<'a> Model<'a> {
     pub(crate) fn evaluate_function(
         &mut self,
@@ -2312,6 +2369,21 @@ impl<'a> Model<'a> {
         args: &[Node],
         cell: CellReferenceIndex,
     ) -> CalcResult {
+        // Excel accepts a 3-D reference in eighteen functions and refuses it in
+        // every other, and the refusal has to happen here rather than inside
+        // each function. Most of them never looked at the far end of a range at
+        // all — `VLOOKUP` reads `left.sheet` and ignores `right.sheet` — so
+        // handing one a span would not raise an error, it would quietly search
+        // the first sheet and answer as though the rest had not been asked for.
+        // A wrong number, not an error, which is the failure this whole change
+        // has to avoid.
+        if !kind.accepts_sheet_span() && args.iter().any(spans_sheets) {
+            return CalcResult::new_error(
+                Error::VALUE,
+                cell,
+                "3-D references are not allowed in this function".to_string(),
+            );
+        }
         match kind {
             Function::And => self.fn_and(args, cell),
             Function::False => self.fn_false(args, cell),

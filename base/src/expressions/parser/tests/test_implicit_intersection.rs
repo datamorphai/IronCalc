@@ -21,6 +21,8 @@ fn simple() {
     let child = Node::RangeKind {
         sheet_name: None,
         sheet_index: 0,
+        sheet_index2: 0,
+        sheet_name2: None,
         absolute_row1: false,
         absolute_column1: false,
         row1: -2,
@@ -54,6 +56,8 @@ fn simple_add() {
     let child = Node::RangeKind {
         sheet_name: None,
         sheet_index: 0,
+        sheet_index2: 0,
+        sheet_name2: None,
         absolute_row1: false,
         absolute_column1: false,
         row1: -2,

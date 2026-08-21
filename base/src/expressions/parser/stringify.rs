@@ -554,6 +554,8 @@ fn stringify(
         RangeKind {
             sheet_name,
             sheet_index,
+            sheet_name2,
+            sheet_index2,
             absolute_row1,
             absolute_column1,
             row1,
@@ -571,6 +573,41 @@ fn stringify(
                 && *absolute_column2
                 && (*column1 == 1)
                 && (*column2 == LAST_COLUMN);
+            // A 3-D reference puts both sheet names in front of one `!`:
+            // `Sheet1:Sheet3!A1`, never `Sheet1!A1:Sheet3!A1`. So the sheet is
+            // stripped from both halves and the span is written by hand.
+            if sheet_index != sheet_index2 {
+                let local = |row, column, absolute_row, absolute_column| {
+                    stringify_reference(
+                        context,
+                        displace_data,
+                        &Reference {
+                            sheet_name: &None,
+                            sheet_index: *sheet_index,
+                            row,
+                            column,
+                            absolute_row,
+                            absolute_column,
+                        },
+                        full_row,
+                        full_column,
+                    )
+                };
+                let a1 = local(*row1, *column1, *absolute_row1, *absolute_column1);
+                let a2 = local(*row2, *column2, *absolute_row2, *absolute_column2);
+                // `Sheet1:Sheet3!A1` rather than `Sheet1:Sheet3!A1:A1` — a
+                // one-cell 3-D reference is written without the repeat.
+                let body = if a1 == a2 { a1 } else { format!("{a1}:{a2}") };
+                let first = match sheet_name {
+                    Some(name) => quote_name(name),
+                    None => String::new(),
+                };
+                let last = match sheet_name2 {
+                    Some(name) => quote_name(name),
+                    None => String::new(),
+                };
+                return format!("{first}:{last}!{body}");
+            }
             let s1 = stringify_reference(
                 context,
                 displace_data,
