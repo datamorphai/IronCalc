@@ -808,6 +808,70 @@ pub(crate) fn parse_date(value: &str, locale: &Locale) -> Result<(i32, String), 
     }
 }
 
+/// Parses a time of day into a fraction of a day, with the format to render it.
+///
+/// `12:00` is half a day, which is how a spreadsheet stores a time: the serial
+/// number is days and the fraction is the time within one.
+///
+/// Deliberately strict. `parse_formatted_number` sees every literal a user
+/// types, so anything accepted here that is not a time turns somebody's text
+/// into a number — and unlike a wrong format, that is not recoverable by
+/// reformatting. Hours are 0-23, minutes and seconds 0-59, one or two digits
+/// each; durations past 24 hours and the AM/PM forms are not read.
+pub(crate) fn parse_time(value: &str) -> Result<(f64, String), String> {
+    let parts: Vec<&str> = value.trim().split(':').collect();
+    if parts.len() < 2 || parts.len() > 3 {
+        return Err("Not a valid time".to_string());
+    }
+
+    fn field(text: &str, max: u32) -> Result<u32, String> {
+        if text.is_empty() || text.len() > 2 || !text.chars().all(|c| c.is_ascii_digit()) {
+            return Err("Not a valid time".to_string());
+        }
+        let parsed: u32 = text.parse().map_err(|_| "Not a valid time".to_string())?;
+        if parsed > max {
+            return Err("Not a valid time".to_string());
+        }
+        Ok(parsed)
+    }
+
+    let hours = field(parts[0], 23)?;
+    let minutes = field(parts[1], 59)?;
+    let (seconds, format) = if parts.len() == 3 {
+        (field(parts[2], 59)?, "hh:mm:ss")
+    } else {
+        (0, "hh:mm")
+    };
+
+    let fraction = (hours * 3600 + minutes * 60 + seconds) as f64 / 86400.0;
+    Ok((fraction, format.to_string()))
+}
+
+/// Parses a date and a time together, as `2025-01-01 12:00:00` or its `T` form.
+///
+/// The two halves are parsed by the functions that already own them rather than
+/// by a second implementation of either — the date half in particular has
+/// locale-dependent day/month ordering that is not worth restating.
+pub(crate) fn parse_date_time(value: &str, locale: &Locale) -> Result<(f64, String), String> {
+    let trimmed = value.trim();
+    // `T` is only a separator between a date and a time, never inside either, so
+    // splitting on it first cannot cut a date in half.
+    let (date_part, time_part) = match trimmed.split_once('T') {
+        Some(halves) => halves,
+        None => trimmed
+            .split_once(char::is_whitespace)
+            .ok_or_else(|| "Not a valid date-time".to_string())?,
+    };
+
+    let (serial_number, date_format) = parse_date(date_part.trim(), locale)?;
+    let (fraction, time_format) = parse_time(time_part.trim())?;
+
+    Ok((
+        serial_number as f64 + fraction,
+        format!("{date_format} {time_format}"),
+    ))
+}
+
 /// Parses a formatted number, returning the numeric value together with the format
 /// Uses heuristics to guess the format string
 /// "$ 123,345.678" => (123345.678, "$#,##0.00")
@@ -874,9 +938,21 @@ pub(crate) fn parse_formatted_number(
         }
     }
 
+    // check if it is a date and a time together, before either alone: the date
+    // parser rejects `2025-01-01 12:00:00` when it tries to read `01 12:00:00`
+    // as a day, so this is the only place the pair is recognised.
+    if let Ok((serial_number, format)) = parse_date_time(original, locale) {
+        return Ok((serial_number, Some(format)));
+    }
+
     // check if it is a date. NOTE: we don't trim the original here
     if let Ok((serial_number, format)) = parse_date(original, locale) {
         return Ok((serial_number as f64, Some(format)));
+    }
+
+    // check if it is a time of day, stored as the fraction of a day it is
+    if let Ok((fraction, format)) = parse_time(value) {
+        return Ok((fraction, Some(format)));
     }
 
     // Lastly we check if it is a number

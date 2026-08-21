@@ -318,3 +318,100 @@ fn long_dates_with_dots() {
         Ok((45353.0, Some("mm.dd.yyyy".to_string())))
     );
 }
+
+// Times and date-times, which this engine did not read back before.
+//
+// A plain date has always parsed; no time form did, which meant a spreadsheet
+// storing a timestamp had to keep it as a serial with a format code rather than
+// as the text somebody typed.
+
+#[test]
+fn times_of_day() {
+    // Half a day, because that is how a spreadsheet stores a time: the serial
+    // number is days and the fraction is the time within one.
+    assert_eq!(parse("12:00", &["$"]), Ok((0.5, Some("hh:mm".to_string()))));
+    assert_eq!(
+        parse("12:00:00", &["$"]),
+        Ok((0.5, Some("hh:mm:ss".to_string())))
+    );
+    assert_eq!(parse("00:00", &["$"]), Ok((0.0, Some("hh:mm".to_string()))));
+    assert_eq!(
+        parse("06:30", &["$"]),
+        Ok((0.27083333333333331, Some("hh:mm".to_string())))
+    );
+    // One second is one 86400th of a day.
+    assert_eq!(
+        parse("00:00:01", &["$"]),
+        Ok((1.0 / 86400.0, Some("hh:mm:ss".to_string())))
+    );
+    // A single leading digit is as ordinary as a padded one.
+    assert_eq!(parse("6:30", &["$"]), Ok((0.27083333333333331, Some("hh:mm".to_string()))));
+}
+
+#[test]
+fn not_times() {
+    // The refusals matter more than the acceptances. `parse_formatted_number`
+    // sees every literal a user types, so anything wrongly accepted here turns
+    // their text into a number — which reformatting cannot undo.
+    for input in [
+        "25:00",       // no such hour
+        "12:60",       // no such minute
+        "12:00:60",    // no such second
+        "12",          // a number, and it already parses as one
+        "12:",         // half a time
+        ":30",         // half a time
+        "12:00:00:00", // too many parts
+        "ab:cd",       // not digits
+        "12:0x",       // not digits
+        "123:00",      // too many digits for an hour
+        "-12:00",      // not a time of day
+    ] {
+        assert!(
+            parse(input, &["$"]).is_err() || parse(input, &["$"]).unwrap().1 != Some("hh:mm".to_string()),
+            "{input} should not parse as a time"
+        );
+    }
+}
+
+#[test]
+fn dates_with_times() {
+    // ISO, with a space and with the `T`.
+    let expected = 45658.5;
+    assert_eq!(
+        parse("2025-01-01 12:00:00", &["$"]),
+        Ok((expected, Some("yyyy-mm-dd hh:mm:ss".to_string())))
+    );
+    assert_eq!(
+        parse("2025-01-01T12:00:00", &["$"]),
+        Ok((expected, Some("yyyy-mm-dd hh:mm:ss".to_string())))
+    );
+    assert_eq!(
+        parse("2025-01-01 12:00", &["$"]),
+        Ok((expected, Some("yyyy-mm-dd hh:mm".to_string())))
+    );
+}
+
+#[test]
+fn a_date_alone_is_unchanged() {
+    // The behaviour that already worked has to keep working: adding times must
+    // not change what a plain date parses to.
+    assert_eq!(
+        parse("2025-01-01", &["$"]),
+        Ok((45658.0, Some("yyyy-mm-dd".to_string())))
+    );
+}
+
+#[test]
+fn not_date_times() {
+    for input in [
+        "2025-01-01 25:00",    // the time half is not a time
+        "2025-13-01 12:00",    // the date half is not a date
+        "hello world",         // neither half is anything
+        "2025-01-01 12:00 pm", // AM/PM is not read, and must not half-parse
+    ] {
+        assert!(
+            parse(input, &["$"]).is_err(),
+            "{input} should not parse as a date-time"
+        );
+    }
+}
