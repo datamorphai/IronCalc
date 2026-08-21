@@ -53,7 +53,7 @@ impl<'a> Model<'a> {
         false
     }
 
-    fn cell_hidden_status(
+    pub(crate) fn cell_hidden_status(
         &self,
         sheet_index: u32,
         row: i32,
@@ -79,7 +79,13 @@ impl<'a> Model<'a> {
     }
 
     // FIXME(TD): This is too much
-    fn cell_is_subtotal(&self, sheet_index: u32, row: i32, column: i32) -> bool {
+    /// Whether a cell holds a nested aggregate that an enclosing one skips.
+    ///
+    /// `AGGREGATE` counts as one as well as `SUBTOTAL` — Excel's own wording is
+    /// "nested SUBTOTAL and AGGREGATE functions", and it is the same problem in
+    /// both directions: a range holding its own total would otherwise be counted
+    /// twice, once as the rows and once as their sum.
+    pub(crate) fn cell_is_subtotal(&self, sheet_index: u32, row: i32, column: i32) -> bool {
         let row_data = match self.workbook.worksheets[sheet_index as usize]
             .sheet_data
             .get(&row)
@@ -100,7 +106,7 @@ impl<'a> Model<'a> {
                 matches!(
                     node,
                     Node::FunctionKind {
-                        kind: Function::Subtotal,
+                        kind: Function::Subtotal | Function::Aggregate,
                         args: _
                     }
                 )

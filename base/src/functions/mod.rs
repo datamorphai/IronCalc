@@ -8,6 +8,7 @@ use crate::{
 };
 
 pub(crate) mod binary_search;
+mod aggregate;
 mod database;
 pub(crate) mod date_and_time;
 mod engineering;
@@ -538,6 +539,7 @@ pub enum Function {
     Delta,
     Gestep,
     Subtotal,
+    Aggregate,
 
     // Database
     Daverage,
@@ -1062,7 +1064,8 @@ impl_function_lookup! {
     convert  => Convert,
     delta    => Delta,
     gestep   => Gestep,
-    subtotal => Subtotal,
+    subtotal  => Subtotal,
+    aggregate => Aggregate,
 
     // Database
     daverage => Daverage,
@@ -1568,6 +1571,7 @@ impl Function {
             Function::Delta => functions.delta.clone(),
             Function::Gestep => functions.gestep.clone(),
             Function::Subtotal => functions.subtotal.clone(),
+            Function::Aggregate => functions.subtotal.clone(),
             Function::Daverage => functions.daverage.clone(),
             Function::Dcount => functions.dcount.clone(),
             Function::Dget => functions.dget.clone(),
@@ -1611,7 +1615,7 @@ impl Function {
         }
     }
 
-    pub fn into_iter() -> IntoIter<Function, 495> {
+    pub fn into_iter() -> IntoIter<Function, 496> {
         [
             Function::And,
             Function::False,
@@ -1946,6 +1950,7 @@ impl Function {
             Function::Delta,
             Function::Gestep,
             Function::Subtotal,
+            Function::Aggregate,
             Function::Roman,
             Function::Arabic,
             Function::Combin,
@@ -2605,6 +2610,7 @@ impl<'a> Model<'a> {
             Function::Delta => self.fn_delta(args, cell),
             Function::Gestep => self.fn_gestep(args, cell),
             Function::Subtotal => self.fn_subtotal(args, cell),
+            Function::Aggregate => self.fn_aggregate(args, cell),
             Function::Acot => self.fn_acot(args, cell),
             Function::Acoth => self.fn_acoth(args, cell),
             Function::Cot => self.fn_cot(args, cell),
