@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 
-use crate::constants::{LAST_COLUMN, LAST_ROW};
 use crate::expressions::parser::ArrayNode;
 use crate::expressions::types::CellReferenceIndex;
+use crate::functions::range_walk::SheetSpan;
 use crate::{
     calc_result::CalcResult, expressions::parser::Node, expressions::token::Error, model::Model,
 };
@@ -12,6 +12,7 @@ impl<'a> Model<'a> {
         &mut self,
         args: &[Node],
         cell: CellReferenceIndex,
+        span: SheetSpan,
         mut f: F,
     ) -> Result<(), CalcResult>
     where
@@ -61,33 +62,28 @@ impl<'a> Model<'a> {
                     }
                 }
                 CalcResult::Range { left, right } => {
-                    if left.sheet != right.sheet {
-                        return Err(CalcResult::new_error(
-                            Error::VALUE,
-                            cell,
-                            "Ranges are in different sheets".to_string(),
-                        ));
-                    }
-
-                    for row in left.row..=right.row {
-                        for column in left.column..=right.column {
-                            match self.evaluate_cell(CellReferenceIndex {
-                                sheet: left.sheet,
-                                row,
-                                column,
-                            }) {
-                                CalcResult::Number(value) => {
-                                    f(value);
+                    let bounds = match self.range_bounds(&left, &right, cell, span) {
+                        Ok(bounds) => bounds,
+                        Err(error) => return Err(error),
+                    };
+                    for sheet in bounds.sheet1..=bounds.sheet2 {
+                        for row in bounds.row1..=bounds.row2 {
+                            for column in bounds.column1..=bounds.column2 {
+                                match self.evaluate_cell(CellReferenceIndex { sheet, row, column })
+                                {
+                                    CalcResult::Number(value) => {
+                                        f(value);
+                                    }
+                                    error @ CalcResult::Error { .. } => return Err(error),
+                                    CalcResult::Range { .. } => {
+                                        return Err(CalcResult::new_error(
+                                            Error::ERROR,
+                                            cell,
+                                            "Unexpected Range".to_string(),
+                                        ));
+                                    }
+                                    _ => {}
                                 }
-                                error @ CalcResult::Error { .. } => return Err(error),
-                                CalcResult::Range { .. } => {
-                                    return Err(CalcResult::new_error(
-                                        Error::ERROR,
-                                        cell,
-                                        "Unexpected Range".to_string(),
-                                    ));
-                                }
-                                _ => {}
                             }
                         }
                     }
@@ -155,39 +151,34 @@ impl<'a> Model<'a> {
                     }
                 }
                 CalcResult::Range { left, right } => {
-                    if left.sheet != right.sheet {
-                        return Err(CalcResult::new_error(
-                            Error::VALUE,
-                            cell,
-                            "Ranges are in different sheets".to_string(),
-                        ));
-                    }
-
-                    for row in left.row..=right.row {
-                        for column in left.column..=right.column {
-                            match self.evaluate_cell(CellReferenceIndex {
-                                sheet: left.sheet,
-                                row,
-                                column,
-                            }) {
-                                CalcResult::Number(value) => {
-                                    f(value);
+                    let bounds = match self.range_bounds(&left, &right, cell, SheetSpan::Allowed) {
+                        Ok(bounds) => bounds,
+                        Err(error) => return Err(error),
+                    };
+                    for sheet in bounds.sheet1..=bounds.sheet2 {
+                        for row in bounds.row1..=bounds.row2 {
+                            for column in bounds.column1..=bounds.column2 {
+                                match self.evaluate_cell(CellReferenceIndex { sheet, row, column })
+                                {
+                                    CalcResult::Number(value) => {
+                                        f(value);
+                                    }
+                                    CalcResult::Boolean(b) => {
+                                        f(if b { 1.0 } else { 0.0 });
+                                    }
+                                    CalcResult::String(_) => {
+                                        f(0.0);
+                                    }
+                                    error @ CalcResult::Error { .. } => return Err(error),
+                                    CalcResult::Range { .. } => {
+                                        return Err(CalcResult::new_error(
+                                            Error::ERROR,
+                                            cell,
+                                            "Unexpected Range".to_string(),
+                                        ));
+                                    }
+                                    _ => {}
                                 }
-                                CalcResult::Boolean(b) => {
-                                    f(if b { 1.0 } else { 0.0 });
-                                }
-                                CalcResult::String(_) => {
-                                    f(0.0);
-                                }
-                                error @ CalcResult::Error { .. } => return Err(error),
-                                CalcResult::Range { .. } => {
-                                    return Err(CalcResult::new_error(
-                                        Error::ERROR,
-                                        cell,
-                                        "Unexpected Range".to_string(),
-                                    ));
-                                }
-                                _ => {}
                             }
                         }
                     }
@@ -207,7 +198,7 @@ impl<'a> Model<'a> {
         }
         let mut count = 0.0;
         let mut sum = 0.0;
-        if let Err(e) = self.for_each_value(args, cell, |f| {
+        if let Err(e) = self.for_each_value(args, cell, SheetSpan::Allowed, |f| {
             count += 1.0;
             sum += f;
         }) {
@@ -233,45 +224,41 @@ impl<'a> Model<'a> {
         for arg in args {
             match self.evaluate_node_in_context(arg, cell) {
                 CalcResult::Range { left, right } => {
-                    if left.sheet != right.sheet {
-                        return CalcResult::new_error(
-                            Error::VALUE,
-                            cell,
-                            "Ranges are in different sheets".to_string(),
-                        );
-                    }
-                    for row in left.row..(right.row + 1) {
-                        for column in left.column..(right.column + 1) {
-                            match self.evaluate_cell(CellReferenceIndex {
-                                sheet: left.sheet,
-                                row,
-                                column,
-                            }) {
-                                CalcResult::String(_) => count += 1.0,
-                                CalcResult::Number(value) => {
-                                    count += 1.0;
-                                    sum += value;
-                                }
-                                CalcResult::Boolean(b) => {
-                                    if b {
-                                        sum += 1.0;
+                    let bounds = match self.range_bounds(&left, &right, cell, SheetSpan::Allowed) {
+                        Ok(bounds) => bounds,
+                        Err(error) => return error,
+                    };
+                    for sheet in bounds.sheet1..=bounds.sheet2 {
+                        for row in bounds.row1..=bounds.row2 {
+                            for column in bounds.column1..=bounds.column2 {
+                                match self.evaluate_cell(CellReferenceIndex { sheet, row, column })
+                                {
+                                    CalcResult::String(_) => count += 1.0,
+                                    CalcResult::Number(value) => {
+                                        count += 1.0;
+                                        sum += value;
                                     }
-                                    count += 1.0;
-                                }
-                                error @ CalcResult::Error { .. } => return error,
-                                CalcResult::Range { .. } => {
-                                    return CalcResult::new_error(
-                                        Error::ERROR,
-                                        cell,
-                                        "Unexpected Range".to_string(),
-                                    );
-                                }
-                                CalcResult::EmptyCell | CalcResult::EmptyArg => {}
-                                CalcResult::Array(_) | CalcResult::Lambda(_) => {
-                                    return CalcResult::Error {
-                                        error: Error::NIMPL,
-                                        origin: cell,
-                                        message: "Arrays not supported yet".to_string(),
+                                    CalcResult::Boolean(b) => {
+                                        if b {
+                                            sum += 1.0;
+                                        }
+                                        count += 1.0;
+                                    }
+                                    error @ CalcResult::Error { .. } => return error,
+                                    CalcResult::Range { .. } => {
+                                        return CalcResult::new_error(
+                                            Error::ERROR,
+                                            cell,
+                                            "Unexpected Range".to_string(),
+                                        );
+                                    }
+                                    CalcResult::EmptyCell | CalcResult::EmptyArg => {}
+                                    CalcResult::Array(_) | CalcResult::Lambda(_) => {
+                                        return CalcResult::Error {
+                                            error: Error::NIMPL,
+                                            origin: cell,
+                                            message: "Arrays not supported yet".to_string(),
+                                        }
                                     }
                                 }
                             }
@@ -343,21 +330,18 @@ impl<'a> Model<'a> {
                     result += 1.0;
                 }
                 CalcResult::Range { left, right } => {
-                    if left.sheet != right.sheet {
-                        return CalcResult::new_error(
-                            Error::VALUE,
-                            cell,
-                            "Ranges are in different sheets".to_string(),
-                        );
-                    }
-                    for row in left.row..(right.row + 1) {
-                        for column in left.column..(right.column + 1) {
-                            if let CalcResult::Number(_) = self.evaluate_cell(CellReferenceIndex {
-                                sheet: left.sheet,
-                                row,
-                                column,
-                            }) {
-                                result += 1.0;
+                    let bounds = match self.range_bounds(&left, &right, cell, SheetSpan::Allowed) {
+                        Ok(bounds) => bounds,
+                        Err(error) => return error,
+                    };
+                    for sheet in bounds.sheet1..=bounds.sheet2 {
+                        for row in bounds.row1..=bounds.row2 {
+                            for column in bounds.column1..=bounds.column2 {
+                                if let CalcResult::Number(_) =
+                                    self.evaluate_cell(CellReferenceIndex { sheet, row, column })
+                                {
+                                    result += 1.0;
+                                }
                             }
                         }
                     }
@@ -379,23 +363,19 @@ impl<'a> Model<'a> {
             match self.evaluate_node_in_context(arg, cell) {
                 CalcResult::EmptyCell | CalcResult::EmptyArg => {}
                 CalcResult::Range { left, right } => {
-                    if left.sheet != right.sheet {
-                        return CalcResult::new_error(
-                            Error::VALUE,
-                            cell,
-                            "Ranges are in different sheets".to_string(),
-                        );
-                    }
-                    for row in left.row..(right.row + 1) {
-                        for column in left.column..(right.column + 1) {
-                            match self.evaluate_cell(CellReferenceIndex {
-                                sheet: left.sheet,
-                                row,
-                                column,
-                            }) {
-                                CalcResult::EmptyCell | CalcResult::EmptyArg => {}
-                                _ => {
-                                    result += 1.0;
+                    let bounds = match self.range_bounds(&left, &right, cell, SheetSpan::Allowed) {
+                        Ok(bounds) => bounds,
+                        Err(error) => return error,
+                    };
+                    for sheet in bounds.sheet1..=bounds.sheet2 {
+                        for row in bounds.row1..=bounds.row2 {
+                            for column in bounds.column1..=bounds.column2 {
+                                match self.evaluate_cell(CellReferenceIndex { sheet, row, column })
+                                {
+                                    CalcResult::EmptyCell | CalcResult::EmptyArg => {}
+                                    _ => {
+                                        result += 1.0;
+                                    }
                                 }
                             }
                         }
@@ -478,57 +458,22 @@ impl<'a> Model<'a> {
                     accumulate(&mut values, &mut sum, &mut count, value);
                 }
                 CalcResult::Range { left, right } => {
-                    if left.sheet != right.sheet {
-                        return CalcResult::new_error(
-                            Error::VALUE,
-                            cell,
-                            "Ranges are in different sheets".to_string(),
-                        );
-                    }
-
-                    let row1 = left.row;
-                    let mut row2 = right.row;
-                    let column1 = left.column;
-                    let mut column2 = right.column;
-
-                    if row1 == 1 && row2 == LAST_ROW {
-                        row2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_row,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
-                    }
-                    if column1 == 1 && column2 == LAST_COLUMN {
-                        column2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_column,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
-                    }
-
-                    for row in row1..=row2 {
-                        for column in column1..=column2 {
-                            match self.evaluate_cell(CellReferenceIndex {
-                                sheet: left.sheet,
-                                row,
-                                column,
-                            }) {
-                                CalcResult::Number(value) => {
-                                    accumulate(&mut values, &mut sum, &mut count, value);
-                                }
-                                error @ CalcResult::Error { .. } => return error,
-                                _ => {
-                                    // ignore non-numeric
+                    let bounds = match self.range_bounds(&left, &right, cell, SheetSpan::Rejected) {
+                        Ok(bounds) => bounds,
+                        Err(error) => return error,
+                    };
+                    for sheet in bounds.sheet1..=bounds.sheet2 {
+                        for row in bounds.row1..=bounds.row2 {
+                            for column in bounds.column1..=bounds.column2 {
+                                match self.evaluate_cell(CellReferenceIndex { sheet, row, column })
+                                {
+                                    CalcResult::Number(value) => {
+                                        accumulate(&mut values, &mut sum, &mut count, value);
+                                    }
+                                    error @ CalcResult::Error { .. } => return error,
+                                    _ => {
+                                        // ignore non-numeric
+                                    }
                                 }
                             }
                         }
@@ -587,7 +532,7 @@ impl<'a> Model<'a> {
         }
 
         let mut values: Vec<f64> = Vec::new();
-        if let Err(e) = self.for_each_value(args, cell, |f| values.push(f)) {
+        if let Err(e) = self.for_each_value(args, cell, SheetSpan::Rejected, |f| values.push(f)) {
             return e;
         }
 
@@ -621,7 +566,7 @@ impl<'a> Model<'a> {
         }
 
         let mut values: Vec<f64> = Vec::new();
-        if let Err(e) = self.for_each_value(args, cell, |f| values.push(f)) {
+        if let Err(e) = self.for_each_value(args, cell, SheetSpan::Rejected, |f| values.push(f)) {
             return e;
         }
 
@@ -713,7 +658,7 @@ impl<'a> Model<'a> {
         }
 
         let mut values: Vec<f64> = Vec::new();
-        if let Err(e) = self.for_each_value(args, cell, |f| values.push(f)) {
+        if let Err(e) = self.for_each_value(args, cell, SheetSpan::Rejected, |f| values.push(f)) {
             return e;
         }
 
@@ -762,7 +707,7 @@ impl<'a> Model<'a> {
         }
 
         let mut values: Vec<f64> = Vec::new();
-        if let Err(e) = self.for_each_value(args, cell, |f| values.push(f)) {
+        if let Err(e) = self.for_each_value(args, cell, SheetSpan::Rejected, |f| values.push(f)) {
             return e;
         }
 
@@ -810,7 +755,7 @@ impl<'a> Model<'a> {
         }
 
         let mut values: Vec<f64> = Vec::new();
-        if let Err(e) = self.for_each_value(args, cell, |f| values.push(f)) {
+        if let Err(e) = self.for_each_value(args, cell, SheetSpan::Rejected, |f| values.push(f)) {
             return e;
         }
 

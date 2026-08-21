@@ -1,4 +1,5 @@
 use crate::expressions::types::CellReferenceIndex;
+use crate::functions::range_walk::SheetSpan;
 use crate::{
     calc_result::CalcResult, expressions::parser::Node, expressions::token::Error, model::Model,
 };
@@ -10,7 +11,7 @@ impl<'a> Model<'a> {
         }
 
         let mut values: Vec<f64> = Vec::new();
-        if let Err(e) = self.for_each_value(args, cell, |f| values.push(f)) {
+        if let Err(e) = self.for_each_value(args, cell, SheetSpan::Rejected, |f| values.push(f)) {
             return e;
         }
 

@@ -9,6 +9,7 @@ use crate::{
 
 pub(crate) mod binary_search;
 mod aggregate;
+pub(crate) mod range_walk;
 mod database;
 pub(crate) mod date_and_time;
 mod engineering;
