@@ -1192,9 +1192,9 @@ fn stringify(
     }
 }
 
+/// Point every reference to `sheet_index` at its new name.
 pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: &str) {
-    match node {
-        // Rename
+    for_each_reference_mut(node, &mut |node| match node {
         Node::ReferenceKind {
             sheet_name,
             sheet_index: index,
@@ -1207,10 +1207,21 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
         Node::RangeKind {
             sheet_name,
             sheet_index: index,
+            sheet_name2,
+            sheet_index2: index2,
             ..
         } => {
             if *index == sheet_index && sheet_name.is_some() {
                 *sheet_name = Some(new_name.to_owned());
+            }
+            // The far end of a 3-D reference needs renaming on the same terms.
+            // Without this, renaming the last sheet of `Sheet1:Sheet3!A1` left
+            // the formula naming a sheet that no longer exists — and quietly,
+            // because `sheet_index2` still pointed at the right worksheet, so
+            // the *answer* stayed correct while the *formula* stopped being
+            // reparseable. A workbook saved and reopened would lose it.
+            if *index2 == sheet_index && sheet_name2.is_some() {
+                *sheet_name2 = Some(new_name.to_owned());
             }
         }
         Node::WrongReferenceKind { sheet_name, .. } => {
@@ -1225,39 +1236,105 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
                 *sheet_name = Some(new_name.to_owned());
             }
         }
+        _ => {}
+    });
+}
+
+/// Pull a 3-D span off a sheet that is about to be deleted.
+///
+/// Excel's rule: deleting a sheet *between* the endpoints simply removes its
+/// values, which needs no rewriting here because formulas are stored by name
+/// and re-resolved. Deleting an *endpoint* is the case that does — Excel
+/// adjusts the reference to the sheets that remain, and without this
+/// `=SUM(Sheet1:Sheet3!A1)` outlives `Sheet3` and answers `#VALUE!` because the
+/// name it still carries resolves to nothing.
+///
+/// `before` and `after` are the names of the sheets either side of the one
+/// being deleted, read before it goes.
+pub(crate) fn shrink_span_on_delete(
+    node: &mut Node,
+    deleted: u32,
+    before: Option<&str>,
+    after: Option<&str>,
+) {
+    for_each_reference_mut(node, &mut |node| {
+        if let Node::RangeKind {
+            sheet_name,
+            sheet_index,
+            sheet_name2,
+            sheet_index2,
+            ..
+        } = node
+        {
+            if sheet_index == sheet_index2 {
+                return;
+            }
+            // A span may be written either way round — `Sheet3:Sheet1!A1` is
+            // the same three sheets — so which end moves inward depends on
+            // which field holds the lower index, not on which was written first.
+            let forwards = sheet_index < sheet_index2;
+            if *sheet_index == deleted {
+                if let Some(name) = if forwards { after } else { before } {
+                    *sheet_name = Some(name.to_owned());
+                }
+            }
+            if *sheet_index2 == deleted {
+                if let Some(name) = if forwards { before } else { after } {
+                    *sheet_name2 = Some(name.to_owned());
+                }
+            }
+        }
+    });
+}
+
+/// Visit every node in a formula that names a sheet.
+///
+/// The recursion is the tedious part and there is now more than one thing to do
+/// with it — renaming a sheet, and shrinking a 3-D span when one is deleted —
+/// so it lives once. The `match` is deliberately exhaustive rather than ending
+/// in `_ => {}`: a new node kind that can hold a reference should stop the
+/// compiler here rather than be silently skipped by both callers.
+pub(crate) fn for_each_reference_mut(node: &mut Node, f: &mut dyn FnMut(&mut Node)) {
+    match node {
+        // The nodes that name a sheet. Handed over whole so a caller can read
+        // whichever fields it needs — `RangeKind` carries two of them.
+        Node::ReferenceKind { .. }
+        | Node::RangeKind { .. }
+        | Node::WrongReferenceKind { .. }
+        | Node::WrongRangeKind { .. } => f(node),
 
         // Go next level
         Node::OpRangeKind { left, right } => {
-            rename_sheet_in_node(left, sheet_index, new_name);
-            rename_sheet_in_node(right, sheet_index, new_name);
+            for_each_reference_mut(left, f);
+            for_each_reference_mut(right, f);
         }
         Node::OpConcatenateKind { left, right } => {
-            rename_sheet_in_node(left, sheet_index, new_name);
-            rename_sheet_in_node(right, sheet_index, new_name);
+            for_each_reference_mut(left, f);
+            for_each_reference_mut(right, f);
         }
         Node::OpSumKind {
             kind: _,
             left,
             right,
         } => {
-            rename_sheet_in_node(left, sheet_index, new_name);
-            rename_sheet_in_node(right, sheet_index, new_name);
+            for_each_reference_mut(left, f);
+            for_each_reference_mut(right, f);
         }
         Node::OpProductKind {
             kind: _,
             left,
             right,
         } => {
-            rename_sheet_in_node(left, sheet_index, new_name);
-            rename_sheet_in_node(right, sheet_index, new_name);
+            for_each_reference_mut(left, f);
+            for_each_reference_mut(right, f);
         }
         Node::OpPowerKind { left, right } => {
-            rename_sheet_in_node(left, sheet_index, new_name);
-            rename_sheet_in_node(right, sheet_index, new_name);
+            for_each_reference_mut(left, f);
+            for_each_reference_mut(right, f);
         }
         Node::FunctionKind { kind: _, args } => {
             for arg in args {
-                rename_sheet_in_node(arg, sheet_index, new_name);
+                for_each_reference_mut(arg, f);
             }
         }
         Node::NamedFunctionKind {
@@ -1266,7 +1343,7 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
             id: _,
         } => {
             for arg in args {
-                rename_sheet_in_node(arg, sheet_index, new_name);
+                for_each_reference_mut(arg, f);
             }
         }
         Node::CompareKind {
@@ -1274,20 +1351,20 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
             left,
             right,
         } => {
-            rename_sheet_in_node(left, sheet_index, new_name);
-            rename_sheet_in_node(right, sheet_index, new_name);
+            for_each_reference_mut(left, f);
+            for_each_reference_mut(right, f);
         }
         Node::UnaryKind { kind: _, right } => {
-            rename_sheet_in_node(right, sheet_index, new_name);
+            for_each_reference_mut(right, f);
         }
         Node::ImplicitIntersection {
             automatic: _,
             child,
         } => {
-            rename_sheet_in_node(child, sheet_index, new_name);
+            for_each_reference_mut(child, f);
         }
         Node::SpillRangeOperator { child } => {
-            rename_sheet_in_node(child, sheet_index, new_name);
+            for_each_reference_mut(child, f);
         }
 
         // Do nothing
@@ -1305,12 +1382,12 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
             parameters: _,
             body,
         } => {
-            rename_sheet_in_node(body, sheet_index, new_name);
+            for_each_reference_mut(body, f);
         }
         Node::LambdaCallKind { lambda, args } => {
-            rename_sheet_in_node(lambda, sheet_index, new_name);
+            for_each_reference_mut(lambda, f);
             for arg in args {
-                rename_sheet_in_node(arg, sheet_index, new_name);
+                for_each_reference_mut(arg, f);
             }
         }
     }

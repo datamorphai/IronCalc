@@ -196,3 +196,107 @@ fn the_range_operator_cannot_write_a_span() {
     assert_eq!(model._get_text("Sheet1!C1"), "#ERROR!");
     assert_eq!(model._get_text("Sheet1!C2"), "#ERROR!");
 }
+
+#[test]
+fn renaming_a_sheet_rewrites_both_ends_of_a_span() {
+    // Either end of `Sheet1:Sheet3!A1` can be the sheet that gets renamed, and
+    // the far end is the one that was missed: `sheet_index2` still pointed at
+    // the right worksheet, so the answer stayed 60 while the formula named a
+    // sheet that no longer existed. Nothing would have complained until the
+    // workbook was saved and read back.
+    let mut model = three_sheets();
+    model._set("Sheet1!C1", "=SUM(Sheet1:Sheet3!A1)");
+    model.evaluate();
+
+    model.rename_sheet("Sheet3", "Totals").unwrap();
+    model.evaluate();
+    assert_eq!(model._get_formula("Sheet1!C1"), "=SUM(Sheet1:Totals!A1)");
+    assert_eq!(model._get_text("Sheet1!C1"), "60");
+
+    model.rename_sheet("Sheet1", "Opening").unwrap();
+    model.evaluate();
+    assert_eq!(model._get_formula("Opening!C1"), "=SUM(Opening:Totals!A1)");
+    assert_eq!(model._get_text("Opening!C1"), "60");
+}
+
+#[test]
+fn a_sheet_inserted_into_a_span_joins_it() {
+    // Excel's rule, and the reason a 3-D reference cannot be expanded into a
+    // list of arguments at parse time: a sheet created between the endpoints
+    // *after* the formula was written is included by it.
+    let mut model = three_sheets();
+    model._set("Sheet1!C1", "=SUM(Sheet1:Sheet3!A1)");
+    model.evaluate();
+    assert_eq!(model._get_text("Sheet1!C1"), "60");
+
+    model.insert_sheet("Middle", 1, None).unwrap();
+    model._set("Middle!A1", "5");
+    model.evaluate();
+
+    assert_eq!(model._get_formula("Sheet1!C1"), "=SUM(Sheet1:Sheet3!A1)");
+    assert_eq!(model._get_text("Sheet1!C1"), "65");
+}
+
+#[test]
+fn deleting_a_sheet_inside_a_span_leaves_the_rest() {
+    let mut model = three_sheets();
+    model._set("Sheet1!C1", "=SUM(Sheet1:Sheet3!A1)");
+    model.evaluate();
+
+    model.delete_sheet_by_name("Sheet2").unwrap();
+    model.evaluate();
+
+    assert_eq!(model._get_formula("Sheet1!C1"), "=SUM(Sheet1:Sheet3!A1)");
+    // 10 + 30; the 20 went with Sheet2.
+    assert_eq!(model._get_text("Sheet1!C1"), "40");
+}
+
+#[test]
+fn deleting_an_endpoint_pulls_the_span_in() {
+    // The far end is stored as an index, so deleting the sheet it points at is
+    // the case where a stale one would read the wrong worksheet or none at all.
+    let mut model = three_sheets();
+    model._set("Sheet1!C1", "=SUM(Sheet1:Sheet3!A1)");
+    model.evaluate();
+
+    model.delete_sheet_by_name("Sheet3").unwrap();
+    model.evaluate();
+
+    // Excel adjusts the reference to the sheets that remain.
+    assert_eq!(model._get_formula("Sheet1!C1"), "=SUM(Sheet1:Sheet2!A1)");
+    assert_eq!(model._get_text("Sheet1!C1"), "30");
+}
+
+#[test]
+fn deleting_an_endpoint_of_a_backwards_span_pulls_it_in_too() {
+    // `Sheet3:Sheet1!A1` is the same three sheets written the other way round,
+    // so which *field* moves inward is decided by which holds the lower index,
+    // not by which was written first. This is the branch that says so.
+    let mut model = three_sheets();
+    model._set("Sheet1!C1", "=SUM(Sheet3:Sheet1!A1)");
+    model.evaluate();
+    assert_eq!(model._get_text("Sheet1!C1"), "60");
+
+    model.delete_sheet_by_name("Sheet3").unwrap();
+    model.evaluate();
+    assert_eq!(model._get_formula("Sheet1!C1"), "=SUM(Sheet2:Sheet1!A1)");
+    assert_eq!(model._get_text("Sheet1!C1"), "30");
+}
+
+#[test]
+fn a_span_pulled_down_to_one_sheet_still_reads() {
+    let mut model = three_sheets();
+    model._set("Sheet1!C1", "=SUM(Sheet1:Sheet2!A1)");
+    model.evaluate();
+    assert_eq!(model._get_text("Sheet1!C1"), "30");
+
+    model.delete_sheet_by_name("Sheet2").unwrap();
+    model.evaluate();
+    // Once both ends land on the same sheet the reference *is* an ordinary
+    // range, and it stringifies as one — `Sheet1!A1:A1` rather than Excel's
+    // `Sheet1:Sheet1!A1`. Different text, same meaning, and it reparses; the
+    // alternative would be keeping a span field that no longer describes
+    // anything just to preserve the spelling.
+    assert_eq!(model._get_formula("Sheet1!C1"), "=SUM(Sheet1!A1:A1)");
+    assert_eq!(model._get_text("Sheet1!C1"), "10");
+}

@@ -10,7 +10,8 @@ use crate::{
         parser::{
             static_analysis::run_static_analysis_on_node,
             stringify::{
-                rename_sheet_in_node, to_english_string, to_localized_string, to_rc_format,
+                rename_sheet_in_node, shrink_span_on_delete, to_english_string,
+                to_localized_string, to_rc_format,
             },
             Node, Parser,
         },
@@ -538,9 +539,56 @@ impl<'a> Model<'a> {
         if sheet_index >= sheet_count {
             return Err("Sheet index too large".to_string());
         };
+
+        // Excel adjusts a 3-D reference whose *endpoint* is the sheet going
+        // away, pulling the span in to the sheets that remain. A sheet deleted
+        // from between the endpoints needs nothing: formulas are stored by name
+        // and re-resolved below, so `Sheet1:Sheet3!A1` keeps meaning what it
+        // said. Both names are read here, before the worksheet is removed.
+        let before = if sheet_index > 0 {
+            Some(self.workbook.worksheets[sheet_index as usize - 1].get_name())
+        } else {
+            None
+        };
+        let after = self
+            .workbook
+            .worksheets
+            .get(sheet_index as usize + 1)
+            .map(|worksheet| worksheet.get_name());
+        self.shrink_spans_on_delete(sheet_index, before.as_deref(), after.as_deref());
+
         self.workbook.worksheets.remove(sheet_index as usize);
         self.reset_parsed_structures();
         Ok(())
+    }
+
+    /// Rewrite every 3-D span that ends on the sheet at `sheet_index`.
+    ///
+    /// The same shape as the rewrite in `rename_sheet_by_index`: formulas are
+    /// stored in R1C1, so each is parsed, the node walked, and the result
+    /// written back.
+    fn shrink_spans_on_delete(
+        &mut self,
+        sheet_index: u32,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) {
+        self.parser.set_lexer_mode(LexerMode::R1C1);
+        for worksheet in &mut self.workbook.worksheets {
+            let cell_reference = &CellReferenceRC {
+                sheet: worksheet.get_name(),
+                row: 1,
+                column: 1,
+            };
+            let mut formulas = Vec::new();
+            for formula in &worksheet.shared_formulas {
+                let mut node = self.parser.parse(formula, cell_reference);
+                shrink_span_on_delete(&mut node, sheet_index, before, after);
+                formulas.push(to_rc_format(&node));
+            }
+            worksheet.shared_formulas = formulas;
+        }
+        self.parser.set_lexer_mode(LexerMode::A1);
     }
 
     /// Moves the worksheet at `sheet_index` to `new_index`, shifting the other
