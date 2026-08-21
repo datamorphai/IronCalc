@@ -167,10 +167,43 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
         ParsePart::Date(p) => {
             let tokens = &p.tokens;
             let mut text = "".to_string();
-            let time_fract = value.fract();
-            let hours = (time_fract * 24.0).floor();
-            let minutes = ((time_fract * 24.0 - hours) * 60.0).floor();
-            let seconds = ((((time_fract * 24.0 - hours) * 60.0) - minutes) * 60.0).round();
+            /*
+             * Rounded once, as a whole time, then split.
+             *
+             * Sub-second precision makes the rounding visible: 59.98 seconds
+             * shown to one decimal is 60.0, which is the next minute — so
+             * rounding the seconds on their own produces `:60`, a time that does
+             * not exist. Rounding the whole thing first and decomposing
+             * afterwards carries into the minute and the hour the way a clock
+             * does.
+             *
+             * The precision is looked up before the loop because the seconds
+             * token is rendered before the fraction that determines how it was
+             * rounded.
+             */
+            let precision = tokens.iter().find_map(|t| match t {
+                TextToken::SecondFraction(digits) => Some(*digits),
+                _ => None,
+            });
+            let mut total_seconds = value.fract() * 86400.0;
+            total_seconds = match precision {
+                Some(digits) => {
+                    let scale = 10f64.powi(digits as i32);
+                    (total_seconds * scale).round() / scale
+                }
+                // Whole seconds when nothing asks for more, which is what this
+                // did before.
+                None => total_seconds.round(),
+            };
+            // A time that rounds up to the next day shows as midnight rather
+            // than as a twenty-fourth hour.
+            if total_seconds >= 86400.0 {
+                total_seconds -= 86400.0;
+            }
+
+            let hours = (total_seconds / 3600.0).floor();
+            let minutes = ((total_seconds - hours * 3600.0) / 60.0).floor();
+            let seconds = total_seconds - hours * 3600.0 - minutes * 60.0;
             let date = from_excel_date(value as i64).ok();
             for token in tokens {
                 match token {
@@ -383,6 +416,13 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
                         let second = seconds as i32;
                         text = format!("{text}{second:02}");
                     }
+                    TextToken::SecondFraction(digits) => {
+                        // The seconds token above printed the whole part; this
+                        // is what is left of the already-rounded value.
+                        let fraction = seconds - seconds.floor();
+                        let scaled = (fraction * 10f64.powi(*digits as i32)).round() as i64;
+                        text = format!("{text}.{scaled:0width$}", width = digits);
+                    }
                     TextToken::AMPM => {
                         let ampm = if hours < 12.0 { "AM" } else { "PM" };
                         text = format!("{text}{ampm}");
@@ -412,11 +452,15 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
                         text = format!("{text}{minute:02}");
                     }
                     TextToken::ElapsedSecond => {
-                        let second = (value * 24.0 * 60.0 * 60.0).floor() as i32;
+                        // i64, because a date serial's elapsed seconds exceed
+                        // i32 — 2025 is about 3.9 billion of them, and the cast
+                        // saturated to 2147483647 rather than overflowing
+                        // loudly. Elapsed hours and minutes still fit.
+                        let second = (value * 24.0 * 60.0 * 60.0).floor() as i64;
                         text = format!("{text}{second}");
                     }
                     TextToken::ElapsedSecondPadded => {
-                        let second = (value * 24.0 * 60.0 * 60.0).floor() as i32;
+                        let second = (value * 24.0 * 60.0 * 60.0).floor() as i64;
                         text = format!("{text}{second:02}");
                     }
                 }
@@ -637,6 +681,7 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
                     TextToken::MinutePadded => {}
                     TextToken::Second => {}
                     TextToken::SecondPadded => {}
+                    TextToken::SecondFraction(_) => {}
                     TextToken::AMPM => {}
                     TextToken::ElapsedHour => {}
                     TextToken::ElapsedHourPadded => {}

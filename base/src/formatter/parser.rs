@@ -33,6 +33,12 @@ pub enum TextToken {
     MinutePadded,
     Second,
     SecondPadded,
+    /// `.0`, `.00` — the fractional part of a second, and how many digits of it.
+    ///
+    /// Excel's `mm:ss.0` is minutes, seconds and tenths. The `.0` reads like a
+    /// decimal number, and a format may not be both a date and a number, which
+    /// is why these codes were rejected outright rather than rendered wrongly.
+    SecondFraction(usize),
     ElapsedHour,
     ElapsedHourPadded,
     ElapsedMinute,
@@ -159,7 +165,7 @@ impl Parser {
         let mut is_time = false;
 
         while token != Token::EOF && token != Token::Separator {
-            let next_token = self.lexer.next_token();
+            let mut next_token = self.lexer.next_token();
             let token_is_digit = token.is_digit();
             is_number = is_number || token_is_digit;
             let next_token_is_digit = next_token.is_digit();
@@ -196,6 +202,25 @@ impl Parser {
                     percent += 1;
                 }
                 Token::Period => {
+                    /*
+                     * In a time format a `.` before zeros is sub-second
+                     * precision rather than a decimal point.
+                     *
+                     * `is_date` is already true here for every code this
+                     * applies to — `mm:ss.0`, `h:mm:ss.0`, `[mm]:ss.0`, and
+                     * Excel's built-in id 47, `mmss.0` — because the minutes and
+                     * seconds are read before the dot.
+                     */
+                    if is_date && !is_number && next_token == Token::Zero {
+                        let mut digits = 0;
+                        while next_token == Token::Zero {
+                            digits += 1;
+                            next_token = self.lexer.next_token();
+                        }
+                        tokens.push(TextToken::SecondFraction(digits));
+                        token = next_token;
+                        continue;
+                    }
                     if is_number && !found_decimal_dot {
                         tokens.push(TextToken::Period);
                         found_decimal_dot = true;
