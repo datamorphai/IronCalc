@@ -199,6 +199,16 @@ pub enum Node {
         left: Box<Node>,
         right: Box<Node>,
     },
+    /// Excel's intersection operator, written as a space: `A1:A5 A3:B7`.
+    ///
+    /// Separate from `OpRangeKind` because the two do opposite things — `:`
+    /// spans from one reference to the other, a space keeps only what they have
+    /// in common — and because an empty intersection is `#NULL!` rather than an
+    /// error about the formula.
+    OpRangeIntersectionKind {
+        left: Box<Node>,
+        right: Box<Node>,
+    },
     OpConcatenateKind {
         left: Box<Node>,
         right: Box<Node>,
@@ -298,6 +308,18 @@ pub fn new_parser_english<'a>(
     let locale = get_default_locale();
     let language = get_default_language();
     Parser::new(worksheets, defined_names, tables, locale, language)
+}
+
+/// Whether a token can begin a reference operand.
+///
+/// The operands of an intersection are references: cell addresses, ranges, and
+/// defined names. A number or a string cannot be intersected, and a token that
+/// is neither means the whitespace in front of it was ordinary spacing.
+fn begins_a_reference(token: &TokenType) -> bool {
+    matches!(
+        token,
+        TokenType::Reference { .. } | TokenType::Range { .. } | TokenType::Ident(_)
+    )
 }
 
 impl<'a> Parser<'a> {
@@ -572,7 +594,7 @@ impl<'a> Parser<'a> {
             next_token = self.lexer.peek_token();
         }
 
-        let mut t = self.parse_range();
+        let mut t = self.parse_intersection();
         if let Node::ParseErrorKind { .. } = t {
             return t;
         }
@@ -590,6 +612,40 @@ impl<'a> Parser<'a> {
                 right: Box::new(t),
             };
             next_token = self.lexer.peek_token();
+        }
+        t
+    }
+
+    /// The intersection operator, which is a space between two references.
+    ///
+    /// It sits between arithmetic and `:` in precedence, which is what Excel
+    /// does: `A1:A5 A3:A7` intersects two ranges rather than intersecting `A5`
+    /// with `A3` and then spanning.
+    ///
+    /// Whitespace is insignificant everywhere else in a formula, so the test is
+    /// narrow on purpose — the next token must both follow whitespace *and* be
+    /// something a reference can start with. `=A1 + A2` peeks an operator and
+    /// `=SUM(A1, A2)` a comma, so neither is touched.
+    fn parse_intersection(&mut self) -> Node {
+        let mut t = self.parse_range();
+        if let Node::ParseErrorKind { .. } = t {
+            return t;
+        }
+        loop {
+            let next_token = self.lexer.peek_token();
+            if !self.lexer.peeked_after_whitespace() || !begins_a_reference(&next_token) {
+                break;
+            }
+            // No `advance_token` here: `peek_token` rewinds, so `parse_range`
+            // reads the same token from the start.
+            let p = self.parse_range();
+            if let Node::ParseErrorKind { .. } = p {
+                return p;
+            }
+            t = Node::OpRangeIntersectionKind {
+                left: Box::new(t),
+                right: Box::new(p),
+            };
         }
         t
     }

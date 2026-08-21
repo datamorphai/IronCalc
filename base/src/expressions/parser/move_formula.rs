@@ -411,6 +411,11 @@ fn to_string_moved(
             to_string_moved(left, move_context, locale, language),
             to_string_moved(right, move_context, locale, language),
         ),
+        OpRangeIntersectionKind { left, right } => format!(
+            "{} {}",
+            to_string_moved(left, move_context, locale, language),
+            to_string_moved(right, move_context, locale, language),
+        ),
         OpConcatenateKind { left, right } => format!(
             "{}&{}",
             to_string_moved(left, move_context, locale, language),

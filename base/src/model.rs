@@ -389,6 +389,76 @@ impl<'a> Model<'a> {
         }
     }
 
+    /// Excel's intersection operator — the space in `=SUM(A1:A5 A3:B7)`.
+    ///
+    /// Keeps only what the two references have in common. The result is a
+    /// range, so it can be handed to a function the same way a written range
+    /// is, and `=A1:B5 B2:C9` on its own resolves to the single overlapping
+    /// cell.
+    ///
+    /// An empty overlap is `#NULL!`, which exists in Excel for precisely this
+    /// and almost nothing else. It is a real answer rather than a malformed
+    /// formula: `=A1:A5 C1:C5` is written correctly and simply describes
+    /// nothing.
+    fn get_range_intersection(
+        &mut self,
+        left: &Node,
+        right: &Node,
+        cell: CellReferenceIndex,
+    ) -> CalcResult {
+        let left_result = self.evaluate_node_with_reference(left, cell);
+        let right_result = self.evaluate_node_with_reference(right, cell);
+        let (
+            CalcResult::Range {
+                left: left1,
+                right: right1,
+            },
+            CalcResult::Range {
+                left: left2,
+                right: right2,
+            },
+        ) = (left_result, right_result)
+        else {
+            return CalcResult::new_error(
+                Error::VALUE,
+                cell,
+                "Intersection needs two references".to_string(),
+            );
+        };
+
+        // Two ranges on different sheets have nothing in common, and this is
+        // not one of the eighteen places a sheet span is meaningful.
+        if left1.sheet != right1.sheet || left2.sheet != right2.sheet || left1.sheet != left2.sheet
+        {
+            return CalcResult::new_error(
+                Error::NULL,
+                cell,
+                "Ranges on different sheets do not intersect".to_string(),
+            );
+        }
+
+        let row1 = left1.row.max(left2.row);
+        let row2 = right1.row.min(right2.row);
+        let column1 = left1.column.max(left2.column);
+        let column2 = right1.column.min(right2.column);
+        if row1 > row2 || column1 > column2 {
+            return CalcResult::new_error(Error::NULL, cell, "Ranges do not intersect".to_string());
+        }
+
+        CalcResult::Range {
+            left: CellReferenceIndex {
+                sheet: left1.sheet,
+                row: row1,
+                column: column1,
+            },
+            right: CellReferenceIndex {
+                sheet: left1.sheet,
+                row: row2,
+                column: column2,
+            },
+        }
+    }
+
     pub(crate) fn formula_without_prefix<'b>(&self, value: &'b str) -> Option<&'b str> {
         if let Some(stripped) = value.strip_prefix('=') {
             if stripped.is_empty() {
@@ -594,6 +664,9 @@ impl<'a> Model<'a> {
                 CalcResult::new_error(Error::REF, cell, "Wrong reference".to_string())
             }
             OpRangeKind { left, right } => self.get_range(left, right, cell),
+            OpRangeIntersectionKind { left, right } => {
+                self.get_range_intersection(left, right, cell)
+            }
             WrongRangeKind { .. } => {
                 CalcResult::new_error(Error::REF, cell, "Wrong range".to_string())
             }

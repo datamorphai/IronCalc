@@ -133,6 +133,17 @@ pub fn add_implicit_intersection(node: &mut Node, add: bool) {
                 }
             }
         }
+        Node::OpRangeIntersectionKind { left, right } => {
+            if add {
+                *node = Node::ImplicitIntersection {
+                    automatic: true,
+                    child: Box::new(Node::OpRangeKind {
+                        left: left.clone(),
+                        right: right.clone(),
+                    }),
+                }
+            }
+        }
 
         // operations
         Node::UnaryKind { right, .. } => add_implicit_intersection(right, add),
@@ -238,6 +249,7 @@ pub fn remove_redundant_implicit_intersection(node: &mut Node, add: bool) {
         | Node::ReferenceKind { .. }
         | Node::RangeKind { .. }
         | Node::OpRangeKind { .. }
+        | Node::OpRangeIntersectionKind { .. }
         | Node::DefinedNameKind(_)
         | Node::NamedVariableKind { .. }
         | Node::TableNameKind(_)
@@ -366,6 +378,9 @@ pub(crate) fn run_static_analysis_on_node(node: &Node) -> StaticResult {
             column2,
             ..
         } => StaticResult::Range(row2 - row1, column2 - column1),
+        // An intersection's shape is not knowable before evaluating it — the
+        // same answer `OpRangeKind` gives, and for the same reason.
+        Node::OpRangeIntersectionKind { .. } => StaticResult::Unknown,
         Node::OpRangeKind { .. } => {
             // TODO: We could do a bit better here
             StaticResult::Unknown

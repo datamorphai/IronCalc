@@ -104,6 +104,19 @@ pub enum LexerMode {
 pub struct Lexer<'a> {
     position: usize,
     next_token_position: Option<usize>,
+    /// Whether whitespace was skipped immediately before the last token read.
+    ///
+    /// Whitespace is insignificant everywhere in a formula except one place:
+    /// between two references it is Excel's intersection operator, so
+    /// `=SUM(A1:A5 A3:A5)` sums A3:A5. The lexer cannot decide that on its own —
+    /// the space in `=SUM(A1, A2)` and the one in `=A1 + A2` are noise — so it
+    /// records the fact and the parser, which knows it has just finished an
+    /// operand, decides what it means.
+    ///
+    /// Deliberately not restored by `peek_token`. That call rewinds `position`
+    /// so the token can be read again, and the parser needs to ask this
+    /// *about the token it just peeked* before deciding whether to consume it.
+    preceded_by_whitespace: bool,
     len: usize,
     chars: Vec<char>,
     mode: LexerMode,
@@ -125,6 +138,7 @@ impl<'a> Lexer<'a> {
             chars,
             position: 0,
             next_token_position: None,
+            preceded_by_whitespace: false,
             len,
             mode,
             locale,
@@ -194,6 +208,14 @@ impl<'a> Lexer<'a> {
         tk
     }
 
+    /// Whether the token last read or peeked had whitespace in front of it.
+    ///
+    /// Only meaningful straight after `next_token` or `peek_token`. See
+    /// [`preceded_by_whitespace`](Self::preceded_by_whitespace).
+    pub fn peeked_after_whitespace(&self) -> bool {
+        self.preceded_by_whitespace
+    }
+
     /// Advances position. This is used in conjunction with [`peek_token`](Self::peek_token)
     /// It is a noop if the has not been a previous peek_token
     pub fn advance_token(&mut self) {
@@ -206,7 +228,9 @@ impl<'a> Lexer<'a> {
     /// Returns the next token
     pub fn next_token(&mut self) -> TokenType {
         self.next_token_position = None;
+        let before = self.position;
         self.consume_whitespace();
+        self.preceded_by_whitespace = self.position > before;
 
         match self.read_next_char() {
             Some(char) => {

@@ -61,6 +61,7 @@ mod test_move_formula;
 mod test_mround_trunc_int;
 mod test_networkdays_networkdaysintl;
 mod test_quote_prefix;
+mod test_range_intersection;
 mod test_range_walk;
 mod test_row_column_styles;
 mod test_set_user_input;

@@ -172,6 +172,7 @@ fn prefix_bound_variables(node: &mut Node, bound: &mut Vec<String>) {
             }
         }
         Node::OpRangeKind { left, right }
+        | Node::OpRangeIntersectionKind { left, right }
         | Node::OpConcatenateKind { left, right }
         | Node::OpSumKind { left, right, .. }
         | Node::OpProductKind { left, right, .. }
@@ -687,6 +688,25 @@ fn stringify(
             );
             format!("{s1}:{s2}")
         }
+        OpRangeIntersectionKind { left, right } => format!(
+            "{} {}",
+            stringify(
+                left,
+                context,
+                displace_data,
+                export_to_excel,
+                locale,
+                language
+            ),
+            stringify(
+                right,
+                context,
+                displace_data,
+                export_to_excel,
+                locale,
+                language
+            )
+        ),
         OpRangeKind { left, right } => format!(
             "{}:{}",
             stringify(
@@ -863,6 +883,7 @@ fn stringify(
                     language,
                 ),
                 OpRangeKind { .. }
+                | OpRangeIntersectionKind { .. }
                 | OpConcatenateKind { .. }
                 | OpProductKind { .. }
                 | OpPowerKind { .. }
@@ -908,6 +929,7 @@ fn stringify(
                     language,
                 ),
                 OpRangeKind { .. }
+                | OpRangeIntersectionKind { .. }
                 | OpConcatenateKind { .. }
                 | OpProductKind { .. }
                 | OpPowerKind { .. }
@@ -1006,6 +1028,7 @@ fn stringify(
                     | WrongReferenceKind { .. }
                     | WrongRangeKind { .. }
                     | OpRangeKind { .. }
+                    | OpRangeIntersectionKind { .. }
                     | OpConcatenateKind { .. }
                     | OpProductKind { .. }
                     | FunctionKind { .. }
@@ -1308,6 +1331,10 @@ pub(crate) fn for_each_reference_mut(node: &mut Node, f: &mut dyn FnMut(&mut Nod
             for_each_reference_mut(left, f);
             for_each_reference_mut(right, f);
         }
+        Node::OpRangeIntersectionKind { left, right } => {
+            for_each_reference_mut(left, f);
+            for_each_reference_mut(right, f);
+        }
         Node::OpConcatenateKind { left, right } => {
             for_each_reference_mut(left, f);
             for_each_reference_mut(right, f);
@@ -1408,6 +1435,10 @@ pub(crate) fn rename_defined_name_in_node(
         }
         // Go next level
         Node::OpRangeKind { left, right } => {
+            rename_defined_name_in_node(left, name, scope, new_name);
+            rename_defined_name_in_node(right, name, scope, new_name);
+        }
+        Node::OpRangeIntersectionKind { left, right } => {
             rename_defined_name_in_node(left, name, scope, new_name);
             rename_defined_name_in_node(right, name, scope, new_name);
         }
