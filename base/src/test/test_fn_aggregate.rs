@@ -152,3 +152,29 @@ fn ignores_a_nested_aggregate() {
     assert_eq!(model._get_text("C1"), "6");
     assert_eq!(model._get_text("C2"), "12");
 }
+
+#[test]
+fn keeps_its_own_name() {
+    /*
+     * A function's name is looked up through the localised table, and this one
+     * was first registered pointing at SUBTOTAL's entry — copied from the line
+     * above it. Two variants then claimed the same string, so an AGGREGATE
+     * formula came back as a SUBTOTAL one and, worse, a SUBTOTAL read from a
+     * file stopped round-tripping at all.
+     *
+     * Nothing in the engine's own tests saw it, because they set formulas and
+     * read values rather than reading the formula back. It surfaced as an Excel
+     * import losing a SUBTOTAL, two layers away from the cause.
+     */
+    let mut model = new_empty_model();
+    model._set("B2", "5");
+    model._set("B3", "7");
+    model._set("A1", "=AGGREGATE(9,6,B2:B3)");
+    model._set("A2", "=SUBTOTAL(9,B2:B3)");
+    model.evaluate();
+
+    assert_eq!(model._get_formula("A1"), "=AGGREGATE(9,6,B2:B3)");
+    assert_eq!(model._get_formula("A2"), "=SUBTOTAL(9,B2:B3)");
+    assert_eq!(model._get_text("A1"), "12");
+    assert_eq!(model._get_text("A2"), "12");
+}

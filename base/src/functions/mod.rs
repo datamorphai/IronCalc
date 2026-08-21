@@ -1571,7 +1571,7 @@ impl Function {
             Function::Delta => functions.delta.clone(),
             Function::Gestep => functions.gestep.clone(),
             Function::Subtotal => functions.subtotal.clone(),
-            Function::Aggregate => functions.subtotal.clone(),
+            Function::Aggregate => functions.aggregate.clone(),
             Function::Daverage => functions.daverage.clone(),
             Function::Dcount => functions.dcount.clone(),
             Function::Dget => functions.dget.clone(),
