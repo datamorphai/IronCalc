@@ -216,6 +216,10 @@ impl Parser {
                 Token::Currency(c) => {
                     currency = Some(c);
                 }
+                Token::Locale => {
+                    // A locale with no symbol says nothing about rendering, and
+                    // the locale part of a currency bracket is already ignored.
+                }
                 Token::QuestionMark => {
                     tokens.push(TextToken::Digit(Digit {
                         kind: '?',
@@ -322,11 +326,13 @@ impl Parser {
                 Token::Second => {
                     is_date = true;
                     is_time = true;
+                    minute_before_seconds(&mut tokens);
                     tokens.push(TextToken::Second);
                 }
                 Token::SecondPadded => {
                     is_date = true;
                     is_time = true;
+                    minute_before_seconds(&mut tokens);
                     tokens.push(TextToken::SecondPadded);
                 }
                 Token::AMPM => {
@@ -415,6 +421,34 @@ impl Parser {
                 exponent_digit_count,
                 currency,
             })
+        }
+    }
+}
+
+/// Excel reads `m` as a minute when it sits immediately before seconds.
+///
+/// The rule has two halves and only one of them can be applied as the format is
+/// read left to right: an `m` *after* an `h` is a minute, and that is known at
+/// the time. An `m` *before* an `s` is also a minute, and that is not — the `s`
+/// has not arrived yet, and a separator sits between them.
+///
+/// So it is applied backwards when the seconds do arrive. Without it `mm:ss`
+/// renders the month and the seconds — `01:15` for half past twelve on the first
+/// of January, which is a plausible-looking time and the wrong one.
+fn minute_before_seconds(tokens: &mut [TextToken]) {
+    // Past any separator between the two, which is where the `:` lives.
+    for token in tokens.iter_mut().rev() {
+        match token {
+            TextToken::Literal(_) | TextToken::Ghost(_) | TextToken::Spacer(_) => continue,
+            TextToken::Month => {
+                *token = TextToken::Minute;
+                return;
+            }
+            TextToken::MonthPadded => {
+                *token = TextToken::MinutePadded;
+                return;
+            }
+            _ => return,
         }
     }
 }

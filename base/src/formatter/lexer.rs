@@ -11,6 +11,14 @@ pub enum Token {
     Color(i32),              // [Red] or [Color 23]
     Condition(Compare, f64), // [<=100] (Comparator, number)
     Currency(char),          // [$€] ($ currency symbol)
+    /// `[$-409]` — a locale with no currency symbol in front of it.
+    ///
+    /// Excel writes these onto date formats as a matter of routine, so the
+    /// bracket carrying only a locale id is the *ordinary* case rather than an
+    /// exotic one. It says nothing about how to render, which is why the parser
+    /// drops it: the locale part of `[$€-fr-FR]` is already ignored, and this is
+    /// the same bracket without the symbol.
+    Locale,
     Literal(char), // €, $, (, ), /, :, +, -, ^, ', {, }, <, =, !, ~, > and space or escaped \X
     Spacer(char),  // *X
     Ghost(char),   // _X
@@ -352,6 +360,25 @@ impl Lexer {
                             //      Like [$$-409] (=1033 for en-US) or
                             //           [$$-40C] (=1036 for fr-FR)
                             self.read_next_char();
+
+                            // `[$-409]` and `[$-en-US]`: a locale with no
+                            // currency symbol. The `-` arrives where a symbol
+                            // would be, and reading it as one leaves the parse
+                            // to fail at the closing bracket.
+                            if Some('-') == self.peek_char() {
+                                while let Some(c) = self.peek_char() {
+                                    if c == ']' {
+                                        break;
+                                    }
+                                    self.read_next_char();
+                                }
+                                if self.read_next_char() == Some(']') {
+                                    return Token::Locale;
+                                }
+                                self.set_error("Failed to parse locale");
+                                return Token::ILLEGAL;
+                            }
+
                             if let Some(currency) = self.read_next_char() {
                                 // ignore the locale part for now, just check if it ends with ']'
                                 if Some('-') == self.peek_char() {
