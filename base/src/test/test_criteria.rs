@@ -280,3 +280,116 @@ fn test_build_criteria_date_localized_month_name() {
     let fn_en = build_criteria(&c, en_locale());
     assert!(!fn_en(&CalcResult::Number(44941.0)));
 }
+
+// Tilde escapes in a criterion that has no wildcard.
+// ------------------------------------------------
+//
+// `~` escapes the character after it, so `~*` is a literal asterisk, `~?` a
+// literal question mark and `~~` a literal tilde. That rule was only reached by
+// criteria that also held a `*` or a `?`; anything else was compared as text,
+// escapes and all, so `N~~rth` looked for a region spelled with two tildes and
+// summed nothing.
+
+#[test]
+fn test_build_criteria_tilde_escapes_a_tilde() {
+    let c = CalcResult::String("N~~rth".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("N~rth".to_string())));
+    // Not the unescaped text, and not the criterion spelled back at it.
+    assert!(!fn_criteria(&CalcResult::String("Nrth".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("N~~rth".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("North".to_string())));
+}
+
+#[test]
+fn test_build_criteria_tilde_escapes_any_character() {
+    // `~r` is an ordinary r: the escape is dropped whatever it protects, which
+    // is why a literal tilde needs `~~` rather than a bare `~`.
+    let c = CalcResult::String("N~rth".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("Nrth".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("N~rth".to_string())));
+}
+
+#[test]
+fn test_build_criteria_trailing_tilde_is_literal() {
+    // Nothing follows it, so there is nothing to escape.
+    let c = CalcResult::String("North~".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("North~".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("North".to_string())));
+}
+
+#[test]
+fn test_build_criteria_escaped_wildcards_without_a_live_one() {
+    // A literal asterisk, where no unescaped wildcard shares the criterion.
+    let c = CalcResult::String("N~*rth".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("N*rth".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("North".to_string())));
+
+    let c = CalcResult::String("N~?rth".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("N?rth".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("North".to_string())));
+}
+
+#[test]
+fn test_build_criteria_tilde_is_case_insensitive_like_the_rest() {
+    let c = CalcResult::String("n~~rth".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("N~RTH".to_string())));
+}
+
+#[test]
+fn test_build_criteria_not_equal_to_a_tilde_escape() {
+    // The `<>` branch carries its own copy of the gate, so it needs its own test.
+    let c = CalcResult::String("<>N~~rth".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(!fn_criteria(&CalcResult::String("N~rth".to_string())));
+    assert!(fn_criteria(&CalcResult::String("North".to_string())));
+}
+
+#[test]
+fn test_build_criteria_live_wildcard_alongside_an_escape() {
+    // `~~` is a literal tilde and the trailing `*` still matches a run, so this
+    // is the case the old rules got right and had to keep getting right.
+    let c = CalcResult::String("N~~r*".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("N~rth".to_string())));
+    assert!(fn_criteria(&CalcResult::String("N~r".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("North".to_string())));
+}
+
+#[test]
+fn test_build_criteria_regex_metacharacters_stay_literal() {
+    // The pattern becomes a regex, so a criterion that is itself regex-shaped
+    // must not be read as one. `.` is a character, not "any character".
+    let c = CalcResult::String("N.rth".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("N.rth".to_string())));
+
+    // And with an escape present, which is what routes it through the regex.
+    let c = CalcResult::String("N~~.rth".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("N~.rth".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("N~xrth".to_string())));
+}
+
+#[test]
+fn test_build_criteria_not_equal_to_a_pattern_skips_blanks() {
+    // `<>` over a pattern used to answer `true` for anything that is not a
+    // string, so an empty cell counted against `<>North*` while `<>North` —
+    // which only ever looks at strings — left it out. Same column, same data,
+    // two answers depending on whether the criterion held a wildcard.
+    let c = CalcResult::String("<>North*".to_string());
+    let fn_criteria = build_criteria(&c, en_locale());
+    assert!(fn_criteria(&CalcResult::String("South".to_string())));
+    assert!(!fn_criteria(&CalcResult::String("Northeast".to_string())));
+    assert!(!fn_criteria(&CalcResult::EmptyCell));
+
+    // The plain-text branch this now agrees with.
+    let c = CalcResult::String("<>North".to_string());
+    let fn_plain = build_criteria(&c, en_locale());
+    assert!(!fn_plain(&CalcResult::EmptyCell));
+}

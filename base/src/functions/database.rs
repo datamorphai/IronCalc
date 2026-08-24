@@ -5,7 +5,9 @@ use crate::{
     Model,
 };
 
-use super::util::{compare_values, from_wildcard_to_regex, result_matches_regex};
+use super::util::{
+    compare_values, from_wildcard_to_regex, needs_pattern_match, result_matches_regex,
+};
 
 impl<'a> Model<'a> {
     // =DAVERAGE(database, field, criteria)
@@ -803,7 +805,7 @@ impl<'a> Model<'a> {
                 // not equal (with wildcard semantics for strings)
                 // If rhs has wildcards and db_val is string, do regex; else use compare_values != 0
                 if let CalcResult::String(s) = db_val {
-                    if criteria.contains('*') || criteria.contains('?') {
+                    if needs_pattern_match(&criteria) {
                         if let Ok(re) = from_wildcard_to_regex(&criteria.to_lowercase(), true) {
                             return !result_matches_regex(
                                 &CalcResult::String(s.to_lowercase()),
@@ -835,7 +837,7 @@ impl<'a> Model<'a> {
                 } else {
                     // textual/boolean equals (case-insensitive), wildcard-enabled for strings
                     if let CalcResult::String(s) = db_val {
-                        if criteria.contains('*') || criteria.contains('?') {
+                        if needs_pattern_match(&criteria) {
                             if let Ok(re) = from_wildcard_to_regex(&criteria.to_lowercase(), true) {
                                 return result_matches_regex(
                                     &CalcResult::String(s.to_lowercase()),

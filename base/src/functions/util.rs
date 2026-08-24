@@ -136,37 +136,53 @@ pub(crate) fn compare_values(left: &CalcResult, right: &CalcResult) -> i32 {
 }
 
 /// We convert an Excel wildcard into a Rust (Perl family) regex
+///
+/// `*` matches any run of characters and `?` matches exactly one. `~` escapes
+/// whatever follows it, which is how a pattern spells a literal wildcard (`~*`)
+/// and a literal tilde (`~~`). A trailing `~` has nothing to escape, so it
+/// stands for itself.
+///
+/// This reads the pattern once rather than rewriting it in passes. The passes it
+/// replaces round-tripped `~~` through a `??` sentinel to keep it away from the
+/// later rules, which worked, but left the rules' correctness resting on no
+/// intermediate form ever colliding with the sentinel — a property that has to
+/// be re-argued from scratch every time a rule is added. A single scanner
+/// decides each character from the input, where the escape actually is.
 pub(crate) fn from_wildcard_to_regex(
     wildcard: &str,
     exact: bool,
 ) -> Result<regex::Regex, regex::Error> {
-    // 1. Escape all
-    let reg = &regex::escape(wildcard);
+    let mut reg = String::with_capacity(wildcard.len() * 2);
+    let mut chars = wildcard.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '~' => match chars.next() {
+                // `~x` is a literal x, whatever x is.
+                Some(escaped) => reg.push_str(&regex::escape(&escaped.to_string())),
+                None => reg.push_str(&regex::escape("~")),
+            },
+            '*' => reg.push_str(".*"),
+            '?' => reg.push('.'),
+            _ => reg.push_str(&regex::escape(&ch.to_string())),
+        }
+    }
 
-    // 2. We convert the escaped '?' into '.' (matches a single character)
-    let reg = &reg.replace("\\?", ".");
-    // 3. We convert the escaped '*' into '.*' (matches anything)
-    let reg = &reg.replace("\\*", ".*");
-
-    // 4. We send '\\~\\~' to '??' that is an unescaped regular expression, therefore cannot be in reg
-    let reg = &reg.replace("\\~\\~", "??");
-
-    // 5. If the escaped and converted '*' is preceded by '~' then it's a raw '*'
-    let reg = &reg.replace("\\~.*", "\\*");
-    // 6. If the escaped and converted '.' is preceded by '~' then it's a raw '?'
-    let reg = &reg.replace("\\~.", "\\?");
-    // '~' is used in Excel to escape any other character.
-    //    So ~x goes to x (whatever x is)
-    // 7. Remove all the others '\\~d' --> 'd'
-    let reg = &reg.replace("\\~", "");
-    // 8. Put back the '\\~\\~'  as '\\~'
-    let reg = &reg.replace("??", "\\~");
-
-    // And we have a valid Perl regex! (As Kim Kardashian said before me: "I know, right?")
     if exact {
         return regex::Regex::new(&format!("^{reg}$"));
     }
-    regex::Regex::new(reg)
+    regex::Regex::new(&reg)
+}
+
+/// True when a criterion has to be matched as a pattern rather than compared as
+/// text.
+///
+/// The wildcards are the obvious half. `~` is here because it escapes, and an
+/// escape that is never interpreted is worse than one that is missing: a
+/// criterion of `N~~rth` compared literally matches the text `N~~rth`, which is
+/// not what any workbook holds, so it silently sums nothing. Excel reads it as
+/// the literal `N~rth`.
+pub(crate) fn needs_pattern_match(criterion: &str) -> bool {
+    criterion.contains('*') || criterion.contains('?') || criterion.contains('~')
 }
 
 // NUMBERS ///
@@ -403,9 +419,16 @@ pub(crate) fn build_criteria<'a>(
                     Box::new(move |x| result_is_not_equal_to_bool(x, b))
                 } else if is_english_error_string(v) {
                     Box::new(move |x| result_is_not_equal_to_error(x, v))
-                } else if v.contains('*') || v.contains('?') {
+                } else if needs_pattern_match(v) {
                     if let Ok(reg) = from_wildcard_to_regex(&v.to_lowercase(), true) {
-                        Box::new(move |x| !result_matches_regex(x, &reg))
+                        // Only a string can fail to match a pattern. Negating the
+                        // match alone would answer `true` for an empty cell, and
+                        // `<>North` two branches down does not — so a blank row
+                        // would count against `<>North*` and not against
+                        // `<>North`, from the same data in the same column.
+                        Box::new(move |x| {
+                            matches!(x, CalcResult::String(_)) && !result_matches_regex(x, &reg)
+                        })
                     } else {
                         Box::new(move |_| false)
                     }
@@ -450,7 +473,7 @@ pub(crate) fn build_criteria<'a>(
                     Box::new(move |x| result_is_equal_to_bool(x, b))
                 } else if is_english_error_string(v) {
                     Box::new(move |x| result_is_equal_to_error(x, v))
-                } else if v.contains('*') || v.contains('?') {
+                } else if needs_pattern_match(v) {
                     if let Ok(reg) = from_wildcard_to_regex(&v.to_lowercase(), true) {
                         Box::new(move |x| result_matches_regex(x, &reg))
                     } else {
