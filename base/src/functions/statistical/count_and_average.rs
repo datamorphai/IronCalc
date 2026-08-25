@@ -62,10 +62,7 @@ impl<'a> Model<'a> {
                     }
                 }
                 CalcResult::Range { left, right } => {
-                    let bounds = match self.range_bounds(&left, &right, cell, span) {
-                        Ok(bounds) => bounds,
-                        Err(error) => return Err(error),
-                    };
+                    let bounds = self.range_bounds(&left, &right, cell, span)?;
                     for sheet in bounds.sheet1..=bounds.sheet2 {
                         for row in bounds.row1..=bounds.row2 {
                             for column in bounds.column1..=bounds.column2 {
@@ -151,10 +148,7 @@ impl<'a> Model<'a> {
                     }
                 }
                 CalcResult::Range { left, right } => {
-                    let bounds = match self.range_bounds(&left, &right, cell, SheetSpan::Allowed) {
-                        Ok(bounds) => bounds,
-                        Err(error) => return Err(error),
-                    };
+                    let bounds = self.range_bounds(&left, &right, cell, SheetSpan::Allowed)?;
                     for sheet in bounds.sheet1..=bounds.sheet2 {
                         for row in bounds.row1..=bounds.row2 {
                             for column in bounds.column1..=bounds.column2 {

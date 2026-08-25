@@ -86,7 +86,10 @@ fn sub_second_precision() {
     // Excel's built-in id 47.
     assert_eq!(format_number(v, "mmss.0", en).text, "3015.7");
     // A whole second still shows its zero, because the format asked for a digit.
-    assert_eq!(format_number(at(12.0, 30.0, 15.0), "mm:ss.0", en).text, "30:15.0");
+    assert_eq!(
+        format_number(at(12.0, 30.0, 15.0), "mm:ss.0", en).text,
+        "30:15.0"
+    );
 }
 
 #[test]
@@ -103,11 +106,20 @@ fn sub_second_rounding_carries() {
     let en = get_locale("en").unwrap();
     let at = |h: f64, m: f64, s: f64| 45658.0 + (h * 3600.0 + m * 60.0 + s) / 86400.0;
 
-    assert_eq!(format_number(at(12.0, 30.0, 59.98), "mm:ss.0", en).text, "31:00.0");
-    assert_eq!(format_number(at(12.0, 59.0, 59.98), "h:mm:ss.0", en).text, "13:00:00.0");
+    assert_eq!(
+        format_number(at(12.0, 30.0, 59.98), "mm:ss.0", en).text,
+        "31:00.0"
+    );
+    assert_eq!(
+        format_number(at(12.0, 59.0, 59.98), "h:mm:ss.0", en).text,
+        "13:00:00.0"
+    );
     // And a time that rounds up past midnight wraps rather than showing a
     // twenty-fourth hour.
-    assert_eq!(format_number(at(23.0, 59.0, 59.99), "h:mm:ss.0", en).text, "0:00:00.0");
+    assert_eq!(
+        format_number(at(23.0, 59.0, 59.99), "h:mm:ss.0", en).text,
+        "0:00:00.0"
+    );
 }
 
 #[test]

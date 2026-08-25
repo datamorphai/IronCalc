@@ -38,13 +38,25 @@ fn a_bare_locale_bracket_renders() {
     let v = 45658.0;
 
     assert_eq!(format_number(v, "[$-409]d-mmm-yy", de).text, "1-Jan-25");
-    assert_eq!(format_number(v, "[$-en-US]d/mmm/yyyy", de).text, "1/Jan/2025");
-    assert_eq!(format_number(1234.5, "[$-409]#,##0.00", en).text, "1,234.50");
+    assert_eq!(
+        format_number(v, "[$-en-US]d/mmm/yyyy", de).text,
+        "1/Jan/2025"
+    );
+    assert_eq!(
+        format_number(1234.5, "[$-409]#,##0.00", en).text,
+        "1,234.50"
+    );
     // The decorated form still carries its symbol, which is what worked before.
-    assert_eq!(format_number(1234.5, "[$$-409]#,##0.00", en).text, "$1,234.50");
+    assert_eq!(
+        format_number(1234.5, "[$$-409]#,##0.00", en).text,
+        "$1,234.50"
+    );
     // And the locale bracket does not change the separators — it is dropped,
     // not honoured, which is the same thing the currency form's locale does.
-    assert_eq!(format_number(1234.5, "[$-409]#,##0.00", de).text, "1.234,50");
+    assert_eq!(
+        format_number(1234.5, "[$-409]#,##0.00", de).text,
+        "1.234,50"
+    );
 }
 
 #[test]

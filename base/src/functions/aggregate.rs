@@ -175,7 +175,7 @@ impl<'a> Model<'a> {
                 };
                 CalcResult::Number(sorted[index])
             }
-            16 | 17 | 18 | 19 => {
+            16..=19 => {
                 let Some(k) = k else {
                     return CalcResult::new_args_number_error(cell);
                 };

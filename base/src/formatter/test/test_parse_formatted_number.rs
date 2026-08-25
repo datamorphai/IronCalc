@@ -337,7 +337,7 @@ fn times_of_day() {
     assert_eq!(parse("00:00", &["$"]), Ok((0.0, Some("hh:mm".to_string()))));
     assert_eq!(
         parse("06:30", &["$"]),
-        Ok((0.27083333333333331, Some("hh:mm".to_string())))
+        Ok((0.2708333333333333, Some("hh:mm".to_string())))
     );
     // One second is one 86400th of a day.
     assert_eq!(
@@ -345,7 +345,10 @@ fn times_of_day() {
         Ok((1.0 / 86400.0, Some("hh:mm:ss".to_string())))
     );
     // A single leading digit is as ordinary as a padded one.
-    assert_eq!(parse("6:30", &["$"]), Ok((0.27083333333333331, Some("hh:mm".to_string()))));
+    assert_eq!(
+        parse("6:30", &["$"]),
+        Ok((0.2708333333333333, Some("hh:mm".to_string())))
+    );
 }
 
 #[test]
@@ -367,7 +370,8 @@ fn not_times() {
         "-12:00",      // not a time of day
     ] {
         assert!(
-            parse(input, &["$"]).is_err() || parse(input, &["$"]).unwrap().1 != Some("hh:mm".to_string()),
+            parse(input, &["$"]).is_err()
+                || parse(input, &["$"]).unwrap().1 != Some("hh:mm".to_string()),
             "{input} should not parse as a time"
         );
     }
