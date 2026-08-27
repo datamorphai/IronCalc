@@ -225,6 +225,71 @@ pub struct Model<'a> {
     pub(crate) cf_cache: HashMap<(u32, i32, i32), Vec<CfCellResult>>,
     /// Dynamic links: links created by formulas like HYPERLINK
     pub(crate) links: HashMap<(u32, i32, i32), Link>,
+    /// Excel's iterative calculation settings (off by default, as in Excel).
+    pub(crate) iterative: IterativeSettings,
+    /// Whether the pass that just ran read a cell that was still evaluating.
+    ///
+    /// Set during evaluation and read by `evaluate` to decide whether to run
+    /// another pass at all. Without it, switching iteration on would cost every
+    /// recalculation a second full pass to discover there was no cycle in it.
+    pub(crate) cycle_seen: bool,
+}
+
+/// Excel's iterative calculation settings (`calcPr`: iterate, count, delta).
+///
+/// Off by default, which is what an unconfigured Excel does. A circular
+/// reference is a mistake far more often than it is a model, and answering
+/// `#CIRC!` is how the user finds out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IterativeSettings {
+    /// Whether a circular reference iterates instead of answering `#CIRC!`.
+    pub enabled: bool,
+    /// Excel's cap; its own default is 100.
+    pub max_iterations: u32,
+    /// Stop when no value moved more than this. Excel's default is 0.001.
+    pub max_change: f64,
+}
+
+impl Default for IterativeSettings {
+    fn default() -> Self {
+        // Excel's own defaults, including `enabled: false`.
+        IterativeSettings {
+            enabled: false,
+            max_iterations: 100,
+            max_change: 0.001,
+        }
+    }
+}
+
+/// How far the largest value moved between two passes.
+///
+/// A cell that appeared or disappeared counts as having moved infinitely far,
+/// so a pass that is still adding cells is never mistaken for a settled one.
+fn largest_change(
+    before: &HashMap<(u32, i32, i32), f64>,
+    after: &HashMap<(u32, i32, i32), f64>,
+) -> f64 {
+    if before.len() != after.len() {
+        return f64::INFINITY;
+    }
+    let mut largest = 0.0f64;
+    for (key, new_value) in after {
+        match before.get(key) {
+            Some(old_value) => {
+                let moved = (new_value - old_value).abs();
+                // NaN is not a settled value; treat it as unbounded movement
+                // rather than letting `<` decide it silently.
+                if moved.is_nan() {
+                    return f64::INFINITY;
+                }
+                if moved > largest {
+                    largest = moved;
+                }
+            }
+            None => return f64::INFINITY,
+        }
+    }
+    largest
 }
 
 // FIXME: Maybe this should be the same as CellReference
@@ -1527,6 +1592,31 @@ impl<'a> Model<'a> {
                 if let Some(state) = self.cells.get(&key) {
                     match state {
                         CellState::Evaluating => {
+                            self.cycle_seen = true;
+                            if self.iterative.enabled {
+                                /*
+                                 * Excel's rule: a cell inside a cycle reads the
+                                 * value the previous pass left in it, and
+                                 * starts from zero when there is none. That is
+                                 * what turns a circular reference from an error
+                                 * into a fixed-point iteration — the interest
+                                 * that depends on the average balance that
+                                 * depends on the interest.
+                                 *
+                                 * An error left over from a previous pass reads
+                                 * as zero rather than propagating: the first
+                                 * pass of a workbook that was answering
+                                 * `#CIRC!` a moment ago must start somewhere,
+                                 * and starting at the error means the cycle can
+                                 * never leave it.
+                                 */
+                                return match self.get_cell_value(&original_cell, cell_reference) {
+                                    v @ (CalcResult::Number(_)
+                                    | CalcResult::Boolean(_)
+                                    | CalcResult::String(_)) => v,
+                                    _ => CalcResult::Number(0.0),
+                                };
+                            }
                             return CalcResult::new_error(
                                 Error::CIRC,
                                 cell_reference,
@@ -1812,6 +1902,8 @@ impl<'a> Model<'a> {
             support: HashMap::new(),
             cf_cache: HashMap::new(),
             links: HashMap::new(),
+            iterative: IterativeSettings::default(),
+            cycle_seen: false,
         };
 
         model.parse_formulas();
@@ -3113,6 +3205,31 @@ impl<'a> Model<'a> {
         false
     }
 
+    /// Turns Excel's iterative calculation on or off, with its two bounds.
+    ///
+    /// `max_iterations` is a cap rather than a count: a model that settles in
+    /// four passes takes four. `max_change` is what "settled" means — the
+    /// largest distance any value moved in the last pass.
+    pub fn set_iterative_calculation(
+        &mut self,
+        enabled: bool,
+        max_iterations: u32,
+        max_change: f64,
+    ) {
+        self.iterative = IterativeSettings {
+            enabled,
+            // A cap of zero would mean "never evaluate", which is not a setting
+            // anybody wants and is not what Excel's dialog can express.
+            max_iterations: max_iterations.max(1),
+            max_change: max_change.abs(),
+        };
+    }
+
+    /// What iterative calculation is currently set to.
+    pub fn iterative_calculation(&self) -> IterativeSettings {
+        self.iterative.clone()
+    }
+
     /// Evaluates the model using a two-phase algorithm that correctly handles dynamic arrays.
     ///
     /// Phase 1 evaluates all spill-capable cells first (in dependency order), so their spill
@@ -3124,6 +3241,62 @@ impl<'a> Model<'a> {
     /// Phase 2 evaluates every remaining cell in natural order.  Because all spill areas have
     /// already been written, regular cells always read the correct spill values.
     pub fn evaluate(&mut self) {
+        self.evaluate_pass();
+
+        /*
+         * Iterative calculation (§4.2), which is one pass unless it has to be
+         * more than one.
+         *
+         * The gate is `cycle_seen`, not `enabled`: a workbook with iteration
+         * switched on but no circular reference in it must cost exactly what it
+         * cost before, and a second pass run only to discover there was nothing
+         * to iterate would tax every recalculation for a setting that is doing
+         * nothing.
+         */
+        if !self.iterative.enabled || !self.cycle_seen {
+            return;
+        }
+
+        let mut previous = self.numeric_snapshot();
+        for _ in 1..self.iterative.max_iterations {
+            self.evaluate_pass();
+            let current = self.numeric_snapshot();
+            let settled = largest_change(&previous, &current) < self.iterative.max_change;
+            previous = current;
+            if settled {
+                break;
+            }
+        }
+    }
+
+    /// The values every formula cell holds, for deciding whether a pass moved
+    /// anything.
+    ///
+    /// Numbers only. A cycle that flips a cell between two strings does not
+    /// converge in any sense this threshold can measure, and Excel's own
+    /// "maximum change" is a number too; such a model runs to the iteration cap
+    /// and stops there, which is the honest outcome.
+    fn numeric_snapshot(&self) -> HashMap<(u32, i32, i32), f64> {
+        let mut values = HashMap::new();
+        for cell in self.get_all_cells() {
+            let key = (cell.index, cell.row, cell.column);
+            let Ok(worksheet) = self.workbook.worksheet(cell.index) else {
+                continue;
+            };
+            if let Some(Cell::CellFormula {
+                v: FormulaValue::Number(v),
+                ..
+            }) = worksheet.cell(cell.row, cell.column)
+            {
+                values.insert(key, *v);
+            }
+        }
+        values
+    }
+
+    /// One full evaluation of the workbook, which is what `evaluate` used to be.
+    fn evaluate_pass(&mut self) {
+        self.cycle_seen = false;
         self.collect_spill_cells();
 
         let n = self.spill_cells.len();

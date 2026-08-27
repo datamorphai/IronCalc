@@ -12,7 +12,7 @@ use crate::{
         types::Area,
         utils::{is_valid_column_number, is_valid_row},
     },
-    model::{FmtSettings, Model},
+    model::{FmtSettings, IterativeSettings, Model},
     types::{
         Alignment, ArrayKind, BorderItem, Cell, CellType, Col, Color, HorizontalAlignment,
         SheetProperties, SheetState, Style, Theme, VerticalAlignment,
@@ -374,6 +374,31 @@ impl<'a> UserModel<'a> {
     /// * [UserModel::pause_evaluation]
     pub fn resume_evaluation(&mut self) {
         self.pause_evaluation = false;
+    }
+
+    /// Turns Excel's iterative calculation on or off (morphbook §4.2).
+    ///
+    /// Evaluates immediately, because the setting's whole visible effect is on
+    /// cells that are already wrong: a workbook full of `#CIRC!` that stayed
+    /// full of `#CIRC!` until the next edit would read as the setting not
+    /// working.
+    ///
+    /// See also:
+    /// * [Model::set_iterative_calculation]
+    pub fn set_iterative_calculation(
+        &mut self,
+        enabled: bool,
+        max_iterations: u32,
+        max_change: f64,
+    ) {
+        self.model
+            .set_iterative_calculation(enabled, max_iterations, max_change);
+        self.evaluate_if_not_paused();
+    }
+
+    /// What iterative calculation is currently set to.
+    pub fn iterative_calculation(&self) -> IterativeSettings {
+        self.model.iterative_calculation()
     }
 
     /// Forces an evaluation of the model

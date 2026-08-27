@@ -728,6 +728,8 @@ impl<'a> Model<'a> {
 
         let mut model = Model {
             workbook,
+            iterative: Default::default(),
+            cycle_seen: false,
             shared_strings: HashMap::new(),
             parsed_formulas,
             parsed_defined_names: HashMap::new(),

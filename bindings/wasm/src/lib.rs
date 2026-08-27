@@ -196,6 +196,37 @@ impl Model {
         self.model.evaluate();
     }
 
+    /// Excel's iterative calculation (morphbook §4.2).
+    ///
+    /// Off by default, which is what an unconfigured Excel does. Turning it on
+    /// makes a circular reference iterate to a fixed point instead of
+    /// answering `#CIRC!` — the FP&A case of interest on an average balance.
+    #[wasm_bindgen(js_name = "setIterativeCalculation")]
+    pub fn set_iterative_calculation(
+        &mut self,
+        enabled: bool,
+        max_iterations: u32,
+        max_change: f64,
+    ) {
+        self.model
+            .set_iterative_calculation(enabled, max_iterations, max_change);
+    }
+
+    /// What iterative calculation is currently set to, as `[enabled, cap, delta]`.
+    ///
+    /// A flat array rather than an object because this crosses the WASM
+    /// boundary and a three-field struct would need a serializer for three
+    /// numbers.
+    #[wasm_bindgen(js_name = "iterativeCalculation")]
+    pub fn iterative_calculation(&self) -> Vec<f64> {
+        let settings = self.model.iterative_calculation();
+        vec![
+            if settings.enabled { 1.0 } else { 0.0 },
+            settings.max_iterations as f64,
+            settings.max_change,
+        ]
+    }
+
     #[wasm_bindgen(js_name = "flushSendQueue")]
     pub fn flush_send_queue(&mut self) -> Vec<u8> {
         self.model.flush_send_queue()
