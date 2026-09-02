@@ -212,6 +212,47 @@ pub fn to_string_displaced(
 }
 
 /// Converts a local reference to a string applying some displacement if needed.
+/// Whether an index is one of the ones a deletion takes away.
+fn inside_deletion(index: i32, start: i32, delta: i32) -> bool {
+    delta < 0 && index >= start && index < start - delta
+}
+
+/// One end of a range, moved clear of a deletion rather than poisoned by it.
+///
+/// A deleted *cell* reference is `#REF!`, and `stringify_reference` is right to
+/// say so. A deleted range *edge* is not: Excel contracts the range and only
+/// writes `#REF!` when the deletion took the whole of it. Stringifying the two
+/// ends independently cannot tell those apart, because neither end knows the
+/// other survived — which is how `=SUM(A12:P12)` became `=SUM(#REF!:O12)` when
+/// column A went, instead of `=SUM(A12:O12)`.
+///
+/// The ends are nudged just outside the deleted band rather than to their final
+/// values, so the displacement that follows still does the arithmetic: the
+/// first index after the band lands back on the band's start, and the last one
+/// before it does not move. `None` means the deletion covered both ends, which
+/// is the case where `#REF!` is the right answer for the whole range.
+fn contract_span(
+    (v1, abs1): (i32, bool),
+    (v2, abs2): (i32, bool),
+    context: i32,
+    start: i32,
+    delta: i32,
+) -> Option<(i32, i32)> {
+    let a1 = if abs1 { v1 } else { v1 + context };
+    let a2 = if abs2 { v2 } else { v2 + context };
+    let dead1 = inside_deletion(a1, start, delta);
+    let dead2 = inside_deletion(a2, start, delta);
+    if dead1 && dead2 {
+        return None;
+    }
+    let a1 = if dead1 { start - delta } else { a1 };
+    let a2 = if dead2 { start - 1 } else { a2 };
+    Some((
+        if abs1 { a1 } else { a1 - context },
+        if abs2 { a2 } else { a2 - context },
+    ))
+}
+
 /// It uses A1 style if context is not None. If context is None it uses R1C1 style
 /// If full_row is true then the row details will be omitted in the A1 case
 /// If full_column is true then column details will be omitted.
@@ -609,14 +650,61 @@ fn stringify(
                 };
                 return format!("{first}:{last}!{body}");
             }
+            // Both ends at once, so a deletion that takes one of them can
+            // shrink the range instead of destroying it.
+            let (mut row1, mut row2) = (*row1, *row2);
+            let (mut column1, mut column2) = (*column1, *column2);
+            if let Some(context) = context {
+                match displace_data {
+                    DisplaceData::Row {
+                        sheet,
+                        row: start,
+                        delta,
+                    } if sheet_index == sheet && !full_row => {
+                        match contract_span(
+                            (row1, *absolute_row1),
+                            (row2, *absolute_row2),
+                            context.row,
+                            *start,
+                            *delta,
+                        ) {
+                            Some((a, b)) => {
+                                row1 = a;
+                                row2 = b;
+                            }
+                            None => return "#REF!".to_string(),
+                        }
+                    }
+                    DisplaceData::Column {
+                        sheet,
+                        column: start,
+                        delta,
+                    } if sheet_index == sheet && !full_column => {
+                        match contract_span(
+                            (column1, *absolute_column1),
+                            (column2, *absolute_column2),
+                            context.column,
+                            *start,
+                            *delta,
+                        ) {
+                            Some((a, b)) => {
+                                column1 = a;
+                                column2 = b;
+                            }
+                            None => return "#REF!".to_string(),
+                        }
+                    }
+                    _ => {}
+                }
+            }
             let s1 = stringify_reference(
                 context,
                 displace_data,
                 &Reference {
                     sheet_name,
                     sheet_index: *sheet_index,
-                    row: *row1,
-                    column: *column1,
+                    row: row1,
+                    column: column1,
                     absolute_row: *absolute_row1,
                     absolute_column: *absolute_column1,
                 },
@@ -629,8 +717,8 @@ fn stringify(
                 &Reference {
                     sheet_name: &None,
                     sheet_index: *sheet_index,
-                    row: *row2,
-                    column: *column2,
+                    row: row2,
+                    column: column2,
                     absolute_row: *absolute_row2,
                     absolute_column: *absolute_column2,
                 },

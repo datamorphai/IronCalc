@@ -195,9 +195,81 @@ fn test_delete_columns() {
     // A long as the borders of the range are not included that's ok.
     assert_eq!(model._get_formula("A2"), *"=SUM(C4:K4)");
 
-    // FIXME: In Excel this would be (lower limit won't change)
-    // assert_eq!(model._get_formula("A3"), *"=SUM(E4:K4)");
-    assert_eq!(model._get_formula("A3"), *"=SUM(#REF!:K4)");
+    // A range whose *edge* is deleted contracts. It used to be poisoned:
+    // `=SUM(#REF!:K4)`, which is what Excel says only when a deletion takes the
+    // whole range. The note left here guessed `=SUM(E4:K4)`, and that is wrong
+    // too — it drops a cell the sum still has. E4:M4 covers E..M; D and E go;
+    // the survivors are the old F..M, and they are now D..K.
+    assert_eq!(model._get_formula("A3"), *"=SUM(D4:K4)");
+}
+
+#[test]
+fn test_delete_contracts_ranges_rather_than_poisoning_them() {
+    let mut model = new_empty_model();
+    // Row 20, so the formulas are not themselves in the columns being deleted
+    // — the first draft of this test put them in B5 and C5 and then read the
+    // cells that other formulas had moved into.
+    model._set("A20", "=SUM(A1:D1)");
+    model._set("F20", "=SUM(B1:D1)");
+    model._set("G20", "=SUM(A1:B1)");
+    model._set("H20", "=SUM(B1:C1)");
+    model._set("I20", "=SUM($B$1:$C$1)");
+    model._set("J20", "=SUM(B1:B1)");
+    model.evaluate();
+
+    // Columns B and C go.
+    assert!(model.delete_columns(0, 2, 2).is_ok());
+    model.evaluate();
+
+    // The start survives, the end does not: the range keeps what is left.
+    assert_eq!(model._get_formula("A20"), *"=SUM(A1:B1)");
+    // Both ends deleted, but the range reaches past them.
+    assert_eq!(model._get_formula("D20"), *"=SUM(B1:B1)");
+    // The end survives, the start does not.
+    assert_eq!(model._get_formula("E20"), *"=SUM(A1:A1)");
+    // Every cell of it deleted — this is where #REF! is the right answer.
+    assert_eq!(model._get_formula("F20"), *"=SUM(#REF!)");
+    // Absolute ends are ends too.
+    assert_eq!(model._get_formula("G20"), *"=SUM(#REF!)");
+    // A one-cell range is not a cell reference, but dies the same way.
+    assert_eq!(model._get_formula("H20"), *"=SUM(#REF!)");
+}
+
+#[test]
+fn test_delete_rows_contracts_ranges() {
+    let mut model = new_empty_model();
+    model._set("F10", "=SUM(A1:A4)");
+    model._set("F11", "=SUM(A2:A4)");
+    model._set("F12", "=SUM(A1:A2)");
+    model._set("F13", "=SUM(A2:A3)");
+    model.evaluate();
+
+    // Rows 2 and 3 go, well above the formulas.
+    assert!(model.delete_rows(0, 2, 2).is_ok());
+    model.evaluate();
+
+    assert_eq!(model._get_formula("F8"), *"=SUM(A1:A2)");
+    assert_eq!(model._get_formula("F9"), *"=SUM(A2:A2)");
+    assert_eq!(model._get_formula("F10"), *"=SUM(A1:A1)");
+    assert_eq!(model._get_formula("F11"), *"=SUM(#REF!)");
+}
+
+#[test]
+fn test_delete_contracts_open_ranges() {
+    let mut model = new_empty_model();
+    model._set("F10", "=SUM(A:C)");
+    model._set("F11", "=SUM(1:4)");
+    model.evaluate();
+
+    assert!(model.delete_columns(0, 2, 1).is_ok());
+    model.evaluate();
+
+    // Column F is now column E — the formulas moved with the deletion, which
+    // is worth saying out loud: reading F here reads an empty cell and proves
+    // nothing.
+    assert_eq!(model._get_formula("E10"), *"=SUM(A:B)");
+    // A whole-row range names every column; a column leaving does not touch it.
+    assert_eq!(model._get_formula("E11"), *"=SUM(1:4)");
 }
 
 #[test]
