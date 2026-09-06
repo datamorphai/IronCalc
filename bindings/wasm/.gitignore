@@ -1,2 +1,5 @@
 target/*
 pkg-xlsx/
+# Intermediate: `make` compiles types.ts to it, folds it into pkg/ with
+# fix_types.py, then deletes it. Tracking it means every build shows a deletion.
+types.js
