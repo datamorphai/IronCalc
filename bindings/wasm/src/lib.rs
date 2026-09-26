@@ -187,6 +187,19 @@ impl Model {
         self.model.pause_evaluation()
     }
 
+    /// Stops recording edits for undo and for the send queue. For a host that
+    /// keeps its own undo journal and never reads either, the recording was
+    /// a gigabyte on a workbook of four million cells.
+    #[wasm_bindgen(js_name = "pauseHistory")]
+    pub fn pause_history(&mut self) {
+        self.model.pause_history()
+    }
+
+    #[wasm_bindgen(js_name = "resumeHistory")]
+    pub fn resume_history(&mut self) {
+        self.model.resume_history()
+    }
+
     #[wasm_bindgen(js_name = "resumeEvaluation")]
     pub fn resume_evaluation(&mut self) {
         self.model.resume_evaluation()

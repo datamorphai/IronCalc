@@ -214,6 +214,14 @@ pub struct UserModel<'a> {
     history: History,
     send_queue: Vec<QueueDiffs>,
     pause_evaluation: bool,
+    /// Whether edits are recorded for undo and for the send queue.
+    ///
+    /// A host with an undo journal of its own, and no collaboration over the
+    /// send queue, pays for both on every cell it loads and never reads
+    /// either: on a workbook of four million cells the recorded diffs were a
+    /// gigabyte, more than the cells themselves. `pause_history` turns the
+    /// recording off; what was recorded before stays.
+    record_history: bool,
 }
 
 /// Given the index of the currently selected sheet, returns the index that same
@@ -251,6 +259,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            record_history: true,
         }
     }
 
@@ -270,6 +279,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            record_history: true,
         })
     }
 
@@ -284,6 +294,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            record_history: true,
         })
     }
 
@@ -2314,7 +2325,20 @@ impl<'a> UserModel<'a> {
 
     // **** Private methods ****** //
 
+    /// Stops recording edits for undo and for the send queue. See `record_history`.
+    pub fn pause_history(&mut self) {
+        self.record_history = false;
+    }
+
+    /// Records edits again.
+    pub fn resume_history(&mut self) {
+        self.record_history = true;
+    }
+
     pub(crate) fn push_diff_list(&mut self, diff_list: DiffList) {
+        if !self.record_history {
+            return;
+        }
         self.send_queue.push(QueueDiffs {
             r#type: DiffType::Redo,
             list: diff_list.clone(),
