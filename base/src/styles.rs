@@ -142,7 +142,22 @@ impl Styles {
         self.cell_xfs.len() as i32 - 1
     }
 
+    /// The index of an existing cell xf equal to `style`, if there is one.
+    ///
+    /// By component ids, not by rebuilding a `Style` per candidate. This
+    /// cloned the font, fill and border and formatted the number format for
+    /// every xf in the table on every call, and it is called for every cell
+    /// that takes a number format or inherits units from a formula — on a
+    /// workbook with thousands of xfs that was milliseconds per cell, and
+    /// minutes to fill a large sheet. The components are looked up once
+    /// (over their own short tables) and the scan compares five integers and
+    /// an alignment. A component the table does not hold means no xf can be
+    /// equal, so the answer is `None` without a scan.
     pub fn get_style_index(&self, style: &Style) -> Option<i32> {
+        let font_id = self.get_font_index(&style.font)?;
+        let fill_id = self.get_fill_index(&style.fill)?;
+        let border_id = self.get_border_index(&style.border)?;
+        let num_fmt_id = self.get_num_fmt_index(&style.num_fmt)?;
         for (index, cell_xf) in self.cell_xfs.iter().enumerate() {
             // Only anonymous formats qualify: an xf parented to a named style
             // (xf_id != 0) changes when the style is updated, so visually equal
@@ -150,20 +165,12 @@ impl Styles {
             if cell_xf.xf_id != 0 {
                 continue;
             }
-            let border_id = cell_xf.border_id as usize;
-            let fill_id = cell_xf.fill_id as usize;
-            let font_id = cell_xf.font_id as usize;
-            let num_fmt_id = cell_xf.num_fmt_id;
-            let quote_prefix = cell_xf.quote_prefix;
-            if style
-                == &(Style {
-                    alignment: cell_xf.alignment.clone(),
-                    num_fmt: get_num_fmt(num_fmt_id, &self.num_fmts),
-                    fill: self.fills[fill_id].clone(),
-                    font: self.fonts[font_id].clone(),
-                    border: self.borders[border_id].clone(),
-                    quote_prefix,
-                })
+            if cell_xf.font_id == font_id
+                && cell_xf.fill_id == fill_id
+                && cell_xf.border_id == border_id
+                && cell_xf.num_fmt_id == num_fmt_id
+                && cell_xf.quote_prefix == style.quote_prefix
+                && cell_xf.alignment == style.alignment
             {
                 return Some(index as i32);
             }

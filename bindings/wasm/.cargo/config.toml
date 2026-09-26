@@ -1,2 +1,22 @@
+# Flags for the wasm build of the engine.
+#
+# `opt-level=3`, not `z`: this engine ships inside a desktop application, not
+# over a network, and speed-optimised code fills a sheet about 1.6x faster
+# for 1.5 MB more wasm.
+#
+# `--initial-memory=1 GiB` is the one that matters. Measured in Node and in
+# Electron, the cost of writing a cell climbed from 2 µs to over 40 µs as the
+# engine's memory grew — a cliff, not the engine's own code, which runs flat
+# natively: every growth of a wasm memory is paid for in proportion to what it
+# already holds. Starting at 1 GiB removes the growths a large workbook would
+# otherwise make thousands of times. The pages are reserved, not touched, so a
+# small workbook costs no more resident memory than before. `--max-memory`
+# alone does not help; it is set so growth past 1 GiB remains possible.
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "panic=abort", "-C", "opt-level=z", "-C", "codegen-units=1"]
+rustflags = [
+  "-C", "panic=abort",
+  "-C", "opt-level=3",
+  "-C", "codegen-units=1",
+  "-C", "link-arg=--initial-memory=1073741824",
+  "-C", "link-arg=--max-memory=4294967296",
+]
