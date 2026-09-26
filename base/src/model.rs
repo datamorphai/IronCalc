@@ -196,6 +196,18 @@ pub struct Model<'a> {
     pub(crate) parsed_defined_names: HashMap<(Option<u32>, String), ParsedDefinedName>,
     /// An optimization to lookup strings faster
     pub(crate) shared_strings: HashMap<String, usize>,
+    /// An optimization to lookup a sheet's shared formulas faster.
+    ///
+    /// `Worksheet::shared_formulas` is a `Vec<String>` searched linearly on
+    /// every formula written, which made writing a sheet of n distinct
+    /// formulas O(n²): a 600,000-formula sheet took minutes to fill. This maps
+    /// each shared formula (in R1C1 form) to its index, per sheet. It is a
+    /// cache and never the truth: a hit is checked against the vector before
+    /// it is used, and the map is rebuilt whenever its length disagrees with
+    /// the vector's, since row and column edits, sheet renames and undo all
+    /// rewrite the vector without going through here. A stale miss can only
+    /// add a duplicate entry, which is harmless.
+    pub(crate) shared_formula_index: HashMap<u32, HashMap<String, usize>>,
     /// An instance of the parser
     pub(crate) parser: Parser<'a>,
     /// The list of cells with formulas that are evaluated or being evaluated
@@ -301,6 +313,36 @@ pub struct CellIndex {
     pub row: i32,
     /// Column index
     pub column: i32,
+}
+
+/// The index of `formula` in a sheet's shared formulas, or -1, through the
+/// per-sheet cache — see `Model::shared_formula_index` for why it exists and
+/// why every hit is checked against the vector.
+fn shared_formula_position(
+    cache: &mut HashMap<u32, HashMap<String, usize>>,
+    sheet: u32,
+    shared_formulas: &[String],
+    formula: &str,
+) -> i32 {
+    let index = cache.entry(sheet).or_default();
+    let rebuild = |index: &mut HashMap<String, usize>| {
+        index.clear();
+        for (i, f) in shared_formulas.iter().enumerate() {
+            index.insert(f.clone(), i);
+        }
+    };
+    if index.len() != shared_formulas.len() {
+        rebuild(index);
+    }
+    match index.get(formula) {
+        Some(&i) if shared_formulas.get(i).map(String::as_str) == Some(formula) => i as i32,
+        Some(_) => {
+            // Rewritten under the cache; rebuild and look once more.
+            rebuild(index);
+            index.get(formula).map(|&i| i as i32).unwrap_or(-1)
+        }
+        None => -1,
+    }
 }
 
 impl<'a> Model<'a> {
@@ -1887,6 +1929,7 @@ impl<'a> Model<'a> {
             workbook,
             parsed_formulas,
             shared_strings,
+            shared_formula_index: HashMap::new(),
             parsed_defined_names: HashMap::new(),
             parser,
             cells,
@@ -2772,11 +2815,13 @@ impl<'a> Model<'a> {
         let is_dynamic = !matches!(static_result, StaticResult::Scalar);
 
         let s = to_rc_format(&parsed_formula);
-        let mut formula_index: i32 = -1;
-        if let Some(index) = shared_formulas.iter().position(|x| x == &s) {
-            formula_index = index as i32;
-        }
+        let mut formula_index: i32 =
+            shared_formula_position(&mut self.shared_formula_index, sheet, shared_formulas, &s);
         if formula_index == -1 {
+            self.shared_formula_index
+                .entry(sheet)
+                .or_default()
+                .insert(s.clone(), shared_formulas.len());
             shared_formulas.push(s);
             self.parsed_formulas[sheet as usize].push((parsed_formula, static_result));
             formula_index = (shared_formulas.len() as i32) - 1;
@@ -2821,11 +2866,13 @@ impl<'a> Model<'a> {
         let static_result = run_static_analysis_on_node(&parsed_formula);
 
         let s = to_rc_format(&parsed_formula);
-        let mut formula_index: i32 = -1;
-        if let Some(index) = shared_formulas.iter().position(|x| x == &s) {
-            formula_index = index as i32;
-        }
+        let mut formula_index: i32 =
+            shared_formula_position(&mut self.shared_formula_index, sheet, shared_formulas, &s);
         if formula_index == -1 {
+            self.shared_formula_index
+                .entry(sheet)
+                .or_default()
+                .insert(s.clone(), shared_formulas.len());
             shared_formulas.push(s);
             self.parsed_formulas[sheet as usize].push((parsed_formula, static_result));
             formula_index = (shared_formulas.len() as i32) - 1;

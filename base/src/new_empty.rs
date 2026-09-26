@@ -731,6 +731,7 @@ impl<'a> Model<'a> {
             iterative: Default::default(),
             cycle_seen: false,
             shared_strings: HashMap::new(),
+            shared_formula_index: HashMap::new(),
             parsed_formulas,
             parsed_defined_names: HashMap::new(),
             parser,
