@@ -44,7 +44,7 @@ impl<'a> Model<'a> {
 
                     if row1 == 1 && row2 == LAST_ROW {
                         row2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_row,
+                            Ok(s) => self.dimension_cached(left.sheet, s).max_row,
                             Err(_) => {
                                 return CalcResult::new_error(
                                     Error::ERROR,
@@ -56,7 +56,7 @@ impl<'a> Model<'a> {
                     }
                     if column1 == 1 && column2 == LAST_COLUMN {
                         column2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_column,
+                            Ok(s) => self.dimension_cached(left.sheet, s).max_column,
                             Err(_) => {
                                 return CalcResult::new_error(
                                     Error::ERROR,

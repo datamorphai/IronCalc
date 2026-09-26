@@ -732,6 +732,7 @@ impl<'a> Model<'a> {
             cycle_seen: false,
             shared_strings: HashMap::new(),
             shared_formula_index: HashMap::new(),
+            dimension_cache: std::cell::RefCell::new(HashMap::new()),
             parsed_formulas,
             parsed_defined_names: HashMap::new(),
             parser,

@@ -208,6 +208,16 @@ pub struct Model<'a> {
     /// rewrite the vector without going through here. A stale miss can only
     /// add a duplicate entry, which is harmless.
     pub(crate) shared_formula_index: HashMap<u32, HashMap<String, usize>>,
+    /// A sheet's used extent, once per evaluation.
+    ///
+    /// `Worksheet::dimension` walks every cell of the sheet. Every whole-column
+    /// or whole-row range in a formula is clipped to the extent, so a SUMIFS
+    /// with four such arguments walked the referenced sheet four times, and
+    /// 58,000 of them against a 700,000-cell sheet walked it 230 billion
+    /// times. Nothing changes a sheet's cells during an evaluation, so the
+    /// extent is computed once per sheet per pass and cleared when a pass
+    /// begins. Only evaluation reads it.
+    pub(crate) dimension_cache: std::cell::RefCell<HashMap<u32, crate::worksheet::WorksheetDimension>>,
     /// An instance of the parser
     pub(crate) parser: Parser<'a>,
     /// The list of cells with formulas that are evaluated or being evaluated
@@ -342,6 +352,23 @@ fn shared_formula_position(
             index.get(formula).map(|&i| i as i32).unwrap_or(-1)
         }
         None => -1,
+    }
+}
+
+impl<'a> Model<'a> {
+    /// The used extent of `worksheet` (sheet index `sheet`), cached for the
+    /// current evaluation pass — see `dimension_cache`.
+    pub(crate) fn dimension_cached(
+        &self,
+        sheet: u32,
+        worksheet: &crate::types::Worksheet,
+    ) -> crate::worksheet::WorksheetDimension {
+        if let Some(d) = self.dimension_cache.borrow().get(&sheet) {
+            return *d;
+        }
+        let d = worksheet.dimension();
+        self.dimension_cache.borrow_mut().insert(sheet, d);
+        d
     }
 }
 
@@ -1930,6 +1957,7 @@ impl<'a> Model<'a> {
             parsed_formulas,
             shared_strings,
             shared_formula_index: HashMap::new(),
+            dimension_cache: std::cell::RefCell::new(HashMap::new()),
             parsed_defined_names: HashMap::new(),
             parser,
             cells,
@@ -3343,6 +3371,7 @@ impl<'a> Model<'a> {
 
     /// One full evaluation of the workbook, which is what `evaluate` used to be.
     fn evaluate_pass(&mut self) {
+        self.dimension_cache.borrow_mut().clear();
         self.cycle_seen = false;
         self.collect_spill_cells();
 

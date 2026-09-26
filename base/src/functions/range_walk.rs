@@ -125,7 +125,7 @@ impl Model<'_> {
                         ));
                     }
                 };
-                let dimension = worksheet.dimension();
+                let dimension = self.dimension_cached(sheet, worksheet);
                 max_row = max_row.max(dimension.max_row);
                 max_column = max_column.max(dimension.max_column);
             }

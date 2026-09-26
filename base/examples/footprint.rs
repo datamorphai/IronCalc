@@ -52,4 +52,9 @@ fn main() {
         println!("{:<26} {:>9} cells so far  {:>6} ms  rss {} MB", f.name, cells, ts.elapsed().as_millis(), rss_mb());
     }
     println!("TOTAL {} cells in {} ms, rss {} MB ({})", cells, t0.elapsed().as_millis(), rss_mb(), mode);
+    if std::env::args().nth(3).as_deref() == Some("evaluate") {
+        let te = Instant::now();
+        if mode != "plain" { user.resume_evaluation(); user.evaluate(); } else { plain.evaluate(); }
+        println!("EVALUATE {} ms, rss {} MB", te.elapsed().as_millis(), rss_mb());
+    }
 }
