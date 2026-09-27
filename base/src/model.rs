@@ -4172,13 +4172,23 @@ impl<'a> Model<'a> {
 
     /// Sets the timezone of the model
     pub fn set_timezone(&mut self, timezone: &str) -> Result<(), String> {
+        self.set_timezone_without_evaluation(timezone)?;
+        self.evaluate();
+        Ok(())
+    }
+
+    /// Sets the timezone and leaves the evaluation to the caller.
+    ///
+    /// `set_timezone` evaluates the whole workbook, which a host restoring a
+    /// model from bytes did not ask for: on a workbook of 2.7 million
+    /// formulas that one call held a window for over half an hour.
+    pub fn set_timezone_without_evaluation(&mut self, timezone: &str) -> Result<(), String> {
         let tz = match Tz::parse(timezone) {
             Ok(tz) => tz,
             Err(_) => return Err(format!("Invalid timezone: {}", timezone)),
         };
         self.tz = tz;
         self.workbook.settings.tz = timezone.to_string();
-        self.evaluate();
         Ok(())
     }
 

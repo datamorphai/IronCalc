@@ -2285,7 +2285,13 @@ impl<'a> UserModel<'a> {
             new_value: timezone.to_string(),
         }];
         self.push_diff_list(diff_list);
-        self.model.set_timezone(timezone)
+        // Paused means the host decides when to evaluate; a timezone change
+        // is no exception.
+        if self.pause_evaluation {
+            self.model.set_timezone_without_evaluation(timezone)
+        } else {
+            self.model.set_timezone(timezone)
+        }
     }
 
     /// Sets the locale for the model
