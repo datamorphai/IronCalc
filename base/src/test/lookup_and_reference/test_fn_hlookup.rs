@@ -85,3 +85,23 @@ fn test_hlookup_array_sorted_largest_smaller() {
     model.evaluate();
     assert_eq!(model._get_text("A1"), "b");
 }
+
+#[test]
+fn test_hlookup_whole_row_reference() {
+    // `1:2` spans every column the grid can hold; the table is narrowed to the
+    // columns that exist.
+    let mut model = new_empty_model();
+    model._set("A1", "10");
+    model._set("B1", "20");
+    model._set("C1", "30");
+    model._set("A2", "a");
+    model._set("B2", "b");
+    model._set("C2", "c");
+    model._set("A4", "=HLOOKUP(20,1:2,2,FALSE)");
+    model._set("A5", "=HLOOKUP(40,1:2,2,FALSE)");
+    model._set("A6", "=HLOOKUP(25,$1:$2,2)");
+    model.evaluate();
+    assert_eq!(model._get_text("A4"), "b");
+    assert_eq!(model._get_text("A5"), "#N/A");
+    assert_eq!(model._get_text("A6"), "b");
+}

@@ -127,3 +127,17 @@ fn test_lookup_array_form_range_wide() {
     model.evaluate();
     assert_eq!(model._get_text("E1"), "y");
 }
+
+#[test]
+fn test_lookup_array_form_whole_column_reference() {
+    let mut model = new_empty_model();
+    model._set("A1", "10");
+    model._set("A2", "20");
+    model._set("A3", "30");
+    model._set("B1", "a");
+    model._set("B2", "b");
+    model._set("B3", "c");
+    model._set("D1", "=LOOKUP(20,A:B)");
+    model.evaluate();
+    assert_eq!(model._get_text("D1"), "b");
+}
