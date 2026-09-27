@@ -190,6 +190,13 @@ impl Model {
     /// Stops recording edits for undo and for the send queue. For a host that
     /// keeps its own undo journal and never reads either, the recording was
     /// a gigabyte on a workbook of four million cells.
+    /// A number formatted with a format code, as a cell with that format
+    /// would show it.
+    #[wasm_bindgen(js_name = "formatNumber")]
+    pub fn format_number(&self, value: f64, format: &str) -> String {
+        self.model.get_model().format_number_for_display(value, format)
+    }
+
     #[wasm_bindgen(js_name = "pauseHistory")]
     pub fn pause_history(&mut self) {
         self.model.pause_history()

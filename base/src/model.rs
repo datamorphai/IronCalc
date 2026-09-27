@@ -3094,6 +3094,15 @@ impl<'a> Model<'a> {
         }
     }
 
+    /// A number as a format code would show it, in this model's locale.
+    ///
+    /// For a host that displays values the model has not computed — a
+    /// formula's last-saved result, shown until the workbook is calculated —
+    /// with the cell's own format, the way a computed one would appear.
+    pub fn format_number_for_display(&self, value: f64, format: &str) -> String {
+        format_number(value, format, self.locale).text
+    }
+
     /// Return the typeof a cell
     pub fn get_cell_type(&self, sheet: u32, row: i32, column: i32) -> Result<CellType, String> {
         Ok(match self.workbook.worksheet(sheet)?.cell(row, column) {
